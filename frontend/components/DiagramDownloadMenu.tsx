@@ -1,0 +1,274 @@
+"use client";
+
+import React, { useCallback, useState } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { toPng, toSvg } from "html-to-image";
+import { jsPDF } from "jspdf";
+import { Download, FileImage, FileJson, FileType, ImageIcon } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import {
+  getDownloadFilename,
+  downloadBlob,
+  downloadString,
+  type DiagramType,
+} from "@/lib/download";
+import type { Node, Edge } from "@xyflow/react";
+
+const IMAGE_SCALE = 2;
+const IMAGE_QUALITY = 1;
+const PDF_IMAGE_SCALE = 2;
+
+export interface DiagramDownloadMenuProps {
+  /** Ref to the flow container element (captured for PNG/SVG/PDF). */
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  /** Current diagram type (used for filename and JSON payload). */
+  diagramType: DiagramType;
+  /** Current nodes (for JSON export). */
+  nodes: Node[];
+  /** Current edges (for JSON export). */
+  edges: Edge[];
+  /** When set, diagram is rendered from code (abstract); JSON export includes this. */
+  diagramCode?: string | null;
+  /**
+   * Run an async export while the UI is in "exporting" state (e.g. overlays hidden).
+   * Must be called before capturing the container for image/PDF.
+   */
+  onPrepareExport: (exportFn: () => Promise<void>) => void;
+  disabled?: boolean;
+  className?: string;
+}
+
+export function DiagramDownloadMenu({
+  containerRef,
+  diagramType,
+  nodes,
+  edges,
+  diagramCode = null,
+  onPrepareExport,
+  disabled,
+  className,
+}: DiagramDownloadMenuProps) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const runExport = useCallback(
+    async (exportFn: () => Promise<void>) => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        await onPrepareExport(exportFn);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Export failed. Please try again.";
+        toast.error(message);
+      } finally {
+        setBusy(false);
+        setOpen(false);
+      }
+    },
+    [busy, onPrepareExport]
+  );
+
+  const handleDownloadPng = useCallback(() => {
+    runExport(async () => {
+      const el = containerRef.current;
+      if (!el) {
+        throw new Error("Canvas not ready. Please try again.");
+      }
+      // Small delay to ensure SVG is fully rendered
+      await new Promise((r) => setTimeout(r, 100));
+      
+      const dataUrl = await toPng(el, {
+        cacheBust: true,
+        pixelRatio: IMAGE_SCALE,
+        quality: IMAGE_QUALITY,
+        backgroundColor: "#020617",
+        skipFonts: true, // Skip external fonts to avoid CORS issues
+        filter: (node) => {
+          // Skip external stylesheets that cause CORS issues
+          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) {
+            return false;
+          }
+          return true;
+        },
+      });
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      downloadBlob(blob, getDownloadFilename("png", diagramType));
+      toast.success("Diagram downloaded as PNG");
+    });
+  }, [containerRef, diagramType, runExport]);
+
+  const handleDownloadSvg = useCallback(() => {
+    runExport(async () => {
+      const el = containerRef.current;
+      if (!el) {
+        throw new Error("Canvas not ready. Please try again.");
+      }
+      // Small delay to ensure SVG is fully rendered
+      await new Promise((r) => setTimeout(r, 100));
+      
+      const dataUrl = await toSvg(el, {
+        cacheBust: true,
+        backgroundColor: "#020617",
+        skipFonts: true,
+        filter: (node) => {
+          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) {
+            return false;
+          }
+          return true;
+        },
+      });
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      downloadBlob(blob, getDownloadFilename("svg", diagramType));
+      toast.success("Diagram downloaded as SVG");
+    });
+  }, [containerRef, diagramType, runExport]);
+
+  const handleDownloadPdf = useCallback(() => {
+    runExport(async () => {
+      const el = containerRef.current;
+      if (!el) {
+        throw new Error("Canvas not ready. Please try again.");
+      }
+      // Small delay to ensure SVG is fully rendered (important for Mermaid diagrams)
+      await new Promise((r) => setTimeout(r, 100));
+      
+      const dataUrl = await toPng(el, {
+        cacheBust: true,
+        pixelRatio: PDF_IMAGE_SCALE,
+        quality: IMAGE_QUALITY,
+        backgroundColor: "#020617",
+        skipFonts: true,
+        filter: (node) => {
+          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) {
+            return false;
+          }
+          return true;
+        },
+      });
+      const img = document.createElement("img");
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Failed to load image for PDF"));
+        img.src = dataUrl;
+      });
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      
+      // Ensure minimum dimensions
+      if (w < 10 || h < 10) {
+        throw new Error("Diagram appears empty. Please ensure the diagram is fully rendered.");
+      }
+      
+      const pdf = new jsPDF({
+        orientation: w > h ? "landscape" : "portrait",
+        unit: "px",
+        format: [w, h],
+      });
+      pdf.addImage(dataUrl, "PNG", 0, 0, w, h);
+      pdf.save(getDownloadFilename("pdf", diagramType));
+      toast.success("Diagram downloaded as PDF");
+    });
+  }, [containerRef, diagramType, runExport]);
+
+  const handleDownloadJson = useCallback(() => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const payload: Record<string, unknown> = {
+        diagramType,
+        exportedAt: new Date().toISOString(),
+      };
+      if (diagramCode) {
+        payload.code = diagramCode;
+      } else {
+        payload.nodes = nodes;
+        payload.edges = edges;
+      }
+      const content = JSON.stringify(payload, null, 2);
+      downloadString(
+        content,
+        getDownloadFilename("json", diagramType),
+        "application/json"
+      );
+      toast.success("Diagram downloaded as JSON");
+      setOpen(false);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Export failed. Please try again.";
+      toast.error(message);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, diagramType, nodes, edges, diagramCode]);
+
+  return (
+    <div className={cn("absolute right-3 top-3 z-10 flex gap-2", className)}>
+      <div data-diagram-download-hide>
+        <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+        <DropdownMenu.Trigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled || busy}
+            className="gap-2 border-slate-600/80 bg-slate-800/90 text-slate-200 shadow hover:bg-slate-700/90 hover:text-slate-100 focus-visible:ring-slate-500"
+            aria-label="Download diagram"
+          >
+            <Download className="size-4 shrink-0" aria-hidden />
+            <span className="hidden sm:inline">Download</span>
+          </Button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="min-w-[12rem] rounded-lg border border-slate-700/80 bg-slate-800/95 p-1 shadow-xl"
+            sideOffset={6}
+            align="end"
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            <DropdownMenu.Label className="px-2 py-1.5 text-xs font-medium text-slate-500">
+              Export as
+            </DropdownMenu.Label>
+            <DropdownMenu.Item
+              onSelect={handleDownloadPng}
+              disabled={busy}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+            >
+              <FileImage className="size-4 shrink-0 text-slate-400" />
+              PNG image
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              onSelect={handleDownloadSvg}
+              disabled={busy}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+            >
+              <ImageIcon className="size-4 shrink-0 text-slate-400" />
+              SVG image
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              onSelect={handleDownloadPdf}
+              disabled={busy}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+            >
+              <FileType className="size-4 shrink-0 text-slate-400" />
+              PDF document
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator className="my-1 h-px bg-slate-600/80" />
+            <DropdownMenu.Item
+              onSelect={handleDownloadJson}
+              disabled={busy}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+            >
+              <FileJson className="size-4 shrink-0 text-slate-400" />
+              JSON data
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,239 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-slate-950: #0f172a;
+  --color-indigo-500: #6366f1;
+  --color-indigo-600: #4f46e5;
+}
+
+/* CSS Variables for theming */
+:root {
+  /* Dark theme (default) */
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+  --muted: #64748b;
+  --muted-foreground: #94a3b8;
+  --border: #334155;
+  --ring: rgba(99, 102, 241, 0.5);
+  --card: #1e293b;
+  --card-foreground: #f1f5f9;
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
+  --secondary: #334155;
+  --secondary-foreground: #f1f5f9;
+  --input: #1e293b;
+  --accent: #334155;
+  --accent-foreground: #f1f5f9;
+  --canvas-bg: #0f172a;
+  --panel-bg: #1e293b;
+  --panel-border: #334155;
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --muted: #64748b;
+  --muted-foreground: #475569;
+  --border: #e2e8f0;
+  --ring: rgba(99, 102, 241, 0.5);
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --input: #ffffff;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
+  --canvas-bg: #f1f5f9;
+  --panel-bg: #ffffff;
+  --panel-border: #e2e8f0;
+}
+
+html,
+body,
+#__next,
+main {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+html {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+body {
+  color: var(--foreground);
+  background-color: var(--background);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Dark theme gradient background */
+:root body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(59, 130, 246, 0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 0% 100%, rgba(139, 92, 246, 0.06), transparent);
+}
+
+/* Light theme gradient background */
+[data-theme="light"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(59, 130, 246, 0.04), transparent),
+    radial-gradient(ellipse 60% 40% at 0% 100%, rgba(139, 92, 246, 0.03), transparent);
+}
+
+/* Global theme utility classes */
+.bg-canvas {
+  background-color: var(--canvas-bg);
+}
+
+.bg-panel {
+  background-color: var(--panel-bg);
+}
+
+.border-panel {
+  border-color: var(--panel-border);
+}
+
+.text-foreground {
+  color: var(--foreground);
+}
+
+.text-muted {
+  color: var(--muted);
+}
+
+.bg-card {
+  background-color: var(--card);
+}
+
+.text-card-foreground {
+  color: var(--card-foreground);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+/* Focus visible for accessibility */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Edge labels: readable step numbers and text */
+.react-flow__edge-text {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--foreground);
+}
+.react-flow__edge-textbg {
+  fill: var(--card);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+/* Mermaid-style animated edges */
+@keyframes edge-flow {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animated-edge {
+  stroke-dasharray: 8 4;
+  animation: edge-flow 0.5s linear infinite;
+}
+
+/* Edge styling for different states */
+.react-flow__edge-path {
+  stroke: var(--primary);
+  stroke-width: 2;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease;
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--primary);
+  stroke-width: 3;
+}
+
+/* Edge label styling */
+.edge-label {
+  font-size: 11px;
+  z-index: 1000;
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Custom marker colors */
+.react-flow__arrowhead {
+  fill: var(--primary);
+}
+
+/* ReactFlow controls styling */
+.react-flow__controls {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.react-flow__controls-button {
+  background: var(--card);
+  border-color: var(--border);
+  fill: var(--foreground);
+}
+
+.react-flow__controls-button:hover {
+  background: var(--secondary);
+}
+
+/* ReactFlow minimap styling */
+.react-flow__minimap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
