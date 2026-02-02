@@ -1,10 +1,9 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
   ReactFlow,
   Background,
-  Controls,
   Panel,
   useNodesState,
   useEdgesState,
@@ -53,6 +52,7 @@ import { useTheme } from "./ThemeProvider";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { ContextPanel, ContextToggle, type ContextMessage } from "./ContextPanel";
 import { RightSidebar, RightSidebarToggle } from "./RightSidebar";
+import { VersionSwitcher, type DiagramVersion } from "./VersionSwitcher";
 
 const EMPTY_NODES: Node[] = [];
 
@@ -68,9 +68,12 @@ function CanvasInner() {
   const [isExporting, setIsExporting] = useState(false);
   const [diagramCode, setDiagramCode] = useState<string | null>(null);
   const [editingNode, setEditingNode] = useState<EditingNode | null>(null);
+  // Context panel and right sidebar - init same on server/client to avoid hydration mismatch
   const [showContextPanel, setShowContextPanel] = useState(true);
   const [showRightSidebar, setShowRightSidebar] = useState(true);
   const [contextMessages, setContextMessages] = useState<ContextMessage[]>([]);
+  const [diagramVersions, setDiagramVersions] = useState<DiagramVersion[]>([]);
+  const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
   const lastPromptRef = useRef<string>("");
   const flowContainerRef = useRef<HTMLDivElement>(null);
 
@@ -85,6 +88,65 @@ function CanvasInner() {
       })
       .catch(() => {});
   }, []);
+
+  // Restore persisted state from localStorage - use useLayoutEffect to apply before paint
+  useLayoutEffect(() => {
+    try {
+      const panel = localStorage.getItem("showContextPanel");
+      const sidebar = localStorage.getItem("showRightSidebar");
+      const raw = localStorage.getItem("contextMessages");
+      const updates: { panel?: boolean; sidebar?: boolean; messages?: ContextMessage[] } = {};
+      if (panel !== null) updates.panel = panel === "true";
+      if (sidebar !== null) updates.sidebar = sidebar === "true";
+      if (raw) {
+        const parsed = JSON.parse(raw) as Array<{ id: string; role: string; content: string; timestamp: string; diagramType?: string }>;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          updates.messages = parsed.map((m) => ({
+            ...m,
+            role: m.role as "user" | "assistant",
+            timestamp: new Date(m.timestamp),
+          }));
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        if (updates.panel !== undefined) setShowContextPanel(updates.panel);
+        if (updates.sidebar !== undefined) setShowRightSidebar(updates.sidebar);
+        if (updates.messages !== undefined) setContextMessages(updates.messages);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Persist context panel and right sidebar visibility
+  useEffect(() => {
+    try {
+      localStorage.setItem("showContextPanel", String(showContextPanel));
+    } catch {
+      // ignore
+    }
+  }, [showContextPanel]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("showRightSidebar", String(showRightSidebar));
+    } catch {
+      // ignore
+    }
+  }, [showRightSidebar]);
+
+  // Persist context messages (cap at 50 to avoid huge storage)
+  useEffect(() => {
+    if (contextMessages.length === 0) return;
+    try {
+      const toStore = contextMessages.slice(-50).map((m) => ({
+        ...m,
+        timestamp: m.timestamp.toISOString(),
+      }));
+      localStorage.setItem("contextMessages", JSON.stringify(toStore));
+    } catch {
+      // ignore
+    }
+  }, [contextMessages]);
 
   const { theme } = useTheme();
 
@@ -168,6 +230,7 @@ function CanvasInner() {
       }
 
       const mermaidCode = data.mermaid ?? "";
+      const versions: DiagramVersion[] = data.versions ?? [];
       const explanationText =
         typeof data.explanation === "string" && data.explanation.trim()
           ? data.explanation.trim()
@@ -179,6 +242,10 @@ function CanvasInner() {
         edges: [],
         explanation: explanationText ?? undefined,
       });
+      
+      // Store versions and reset selected index
+      setDiagramVersions(versions);
+      setSelectedVersionIndex(0);
 
       if (mermaidCode) {
         setDiagramCode(mermaidCode);
@@ -246,6 +313,7 @@ function CanvasInner() {
         }
 
         const mermaidCode = data.mermaid ?? "";
+        const versions: DiagramVersion[] = data.versions ?? [];
         const explanationText =
           typeof data.explanation === "string" && data.explanation.trim()
             ? data.explanation.trim()
@@ -257,6 +325,10 @@ function CanvasInner() {
           edges: [],
           explanation: explanationText ?? undefined,
         });
+        
+        // Store versions and reset selected index
+        setDiagramVersions(versions);
+        setSelectedVersionIndex(0);
 
         if (mermaidCode) {
           setDiagramCode(mermaidCode);
@@ -359,10 +431,43 @@ function CanvasInner() {
     [contextMessages, handlePrompt]
   );
 
+  const handleEditMessage = useCallback(
+    (messageId: string, newContent: string) => {
+      const idx = contextMessages.findIndex((m) => m.id === messageId);
+      if (idx < 0) return;
+      // Replace the message and remove everything after it (assistant response + subsequent)
+      const updated = [
+        ...contextMessages.slice(0, idx),
+        { ...contextMessages[idx], content: newContent, timestamp: new Date() },
+      ];
+      setContextMessages(updated);
+      // Regenerate with the edited prompt (use context from messages before this one)
+      const contextStr = updated
+        .slice(0, -1)
+        .slice(-4)
+        .map((m) => `${m.role}: ${m.content}`)
+        .join("\n");
+      const refinedPrompt = contextStr
+        ? `Previous context:\n${contextStr}\n\nUser's refinement: ${newContent}`
+        : newContent;
+      handlePrompt(refinedPrompt);
+    },
+    [contextMessages, handlePrompt]
+  );
+
   const handleClearContextHistory = useCallback(() => {
     setContextMessages([]);
     toast.success("Context history cleared");
   }, []);
+
+  // Handle version selection
+  const handleSelectVersion = useCallback((index: number) => {
+    if (diagramVersions[index]) {
+      setSelectedVersionIndex(index);
+      setDiagramCode(diagramVersions[index].code);
+      toast.success(`Switched to ${diagramVersions[index].layout} layout`);
+    }
+  }, [diagramVersions]);
 
   const handleSelectRepo = useCallback(
     (repoUrl: string) => {
@@ -377,6 +482,7 @@ function CanvasInner() {
       <ContextPanel
         messages={contextMessages}
         onSendMessage={handleContextMessage}
+        onEditMessage={handleEditMessage}
         onClearHistory={handleClearContextHistory}
         isLoading={loading}
         isOpen={showContextPanel}
@@ -423,12 +529,6 @@ function CanvasInner() {
                 size={1}
                 color={theme === "dark" ? "rgba(71, 85, 105, 0.35)" : "rgba(71, 85, 105, 0.2)"}
               />
-              <Controls 
-                className="!bg-[var(--card)] !border-[var(--border)] !shadow-lg"
-                showZoom
-                showFitView
-                showInteractive={false}
-              />
               {selectedNode && !editingNode && (
                 <Panel position="top-center" className="flex gap-2">
                   <button
@@ -454,10 +554,21 @@ function CanvasInner() {
             />
           )}
 
+          {/* Version Switcher - only show when multiple versions available */}
+          {!showWelcome && diagramVersions.length > 1 && (
+            <div data-diagram-download-hide className="absolute left-3 top-3 z-20">
+              <VersionSwitcher
+                versions={diagramVersions}
+                selectedIndex={selectedVersionIndex}
+                onSelectVersion={handleSelectVersion}
+              />
+            </div>
+          )}
+
           {explanation && !showWelcome && (
-            <div data-diagram-download-hide className="absolute left-3 right-3 top-12 z-10 max-w-2xl rounded border border-slate-700/80 bg-slate-800/95 px-3 py-2">
-              <p className="text-xs font-medium text-indigo-400">How it works</p>
-              <p className="mt-0.5 text-sm text-slate-300">{explanation}</p>
+            <div data-diagram-download-hide className="absolute left-3 right-3 top-16 z-10 max-w-2xl rounded border border-[var(--border)] bg-[var(--card)]/95 px-3 py-2">
+              <p className="text-xs font-medium text-[var(--primary)]">How it works</p>
+              <p className="mt-0.5 text-sm text-[var(--foreground)]">{explanation}</p>
             </div>
           )}
 
@@ -534,7 +645,7 @@ function CanvasInner() {
               isOpen={showRightSidebar}
             />
             {!showWelcome && (
-              <div className="ml-auto min-w-0 flex-1 max-w-2xl">
+              <div className="ml-auto min-w-0 flex-1 max-w-5xl">
                 <PromptBar
                   onSubmit={handlePrompt}
                   onGenerateFromRepo={handleGenerateFromRepo}

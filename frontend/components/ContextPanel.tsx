@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { MessageSquare, Send, Trash2, PanelLeftClose } from "lucide-react";
+import { MessageSquare, Send, Trash2, PanelLeftClose, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface ContextMessage {
@@ -15,6 +15,7 @@ export interface ContextMessage {
 interface ContextPanelProps {
   messages: ContextMessage[];
   onSendMessage: (message: string) => void;
+  onEditMessage?: (messageId: string, newContent: string) => void;
   onClearHistory: () => void;
   isLoading?: boolean;
   isOpen: boolean;
@@ -24,12 +25,14 @@ interface ContextPanelProps {
 export function ContextPanel({
   messages,
   onSendMessage,
+  onEditMessage,
   onClearHistory,
   isLoading = false,
   isOpen,
   onClose,
 }: ContextPanelProps) {
   const [input, setInput] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,10 +48,29 @@ export function ContextPanel({
     }
   }, [isOpen]);
 
+  // Load message content when editing
+  const handleStartEdit = (msg: ContextMessage) => {
+    if (msg.role !== "user") return;
+    setEditingMessageId(msg.id);
+    setInput(msg.content);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setInput("");
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-    onSendMessage(input.trim());
+    const trimmed = input.trim();
+    if (editingMessageId && onEditMessage) {
+      onEditMessage(editingMessageId, trimmed);
+      setEditingMessageId(null);
+    } else {
+      onSendMessage(trimmed);
+    }
     setInput("");
   };
 
@@ -66,7 +88,7 @@ export function ContextPanel({
   return (
     <div
       className={cn(
-        "shrink-0 border-r border-[var(--border)] bg-[var(--card)] transition-all duration-300 flex flex-col",
+        "shrink-0 border-r border-[var(--border)] bg-[var(--card)] transition-[width] duration-200 ease-out flex flex-col",
         isOpen ? "w-80" : "w-0"
       )}
       style={{ overflow: "hidden" }}
@@ -118,28 +140,50 @@ export function ContextPanel({
               <div
                 key={msg.id}
                 className={cn(
-                  "flex flex-col gap-1",
+                  "flex flex-col gap-1 group",
                   msg.role === "user" ? "items-end" : "items-start"
                 )}
               >
                 <div
                   className={cn(
-                    "max-w-[85%] rounded-lg px-3 py-2",
+                    "max-w-[85%] rounded-lg px-3 py-2 relative",
                     msg.role === "user"
                       ? "bg-[var(--primary)] text-white"
                       : "bg-[var(--secondary)] text-[var(--foreground)]"
                   )}
                 >
-                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  <p className="text-sm whitespace-pre-wrap pr-6">{msg.content}</p>
+                  {msg.role === "user" && onEditMessage && (
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(msg)}
+                      disabled={isLoading}
+                      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md opacity-60 hover:opacity-100 hover:bg-white/20 transition-opacity disabled:opacity-50"
+                      title="Edit and regenerate"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
                   {msg.diagramType && msg.role === "assistant" && (
                     <span className="mt-1 inline-block rounded bg-[var(--accent)] px-1.5 py-0.5 text-xs text-[var(--muted)]">
                       {msg.diagramType}
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] text-[var(--muted)] px-1">
-                  {formatTime(msg.timestamp)}
-                </span>
+                <div className="flex items-center gap-2 px-1">
+                  <span className="text-[10px] text-[var(--muted)]">
+                    {formatTime(msg.timestamp)}
+                  </span>
+                  {editingMessageId === msg.id && (
+                    <button
+                      type="button"
+                      onClick={handleCancelEdit}
+                      className="text-[10px] text-[var(--muted)] hover:text-[var(--foreground)] underline"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
             <div ref={messagesEndRef} />
@@ -158,7 +202,7 @@ export function ContextPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Add context or refine diagram..."
+            placeholder={editingMessageId ? "Edit your message and press Enter to regenerate..." : "Add context or refine diagram..."}
             rows={3}
             className="min-w-0 w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--primary)]"
             disabled={isLoading}
@@ -173,7 +217,7 @@ export function ContextPanel({
               className="flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:opacity-90 transition"
             >
               <Send className="h-3 w-3" />
-              Send
+              {editingMessageId ? "Save & Regenerate" : "Send"}
             </button>
           </div>
         </div>

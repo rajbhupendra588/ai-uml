@@ -29,7 +29,7 @@ export function RightSidebar({
   return (
     <div
       className={cn(
-        "shrink-0 border-l border-[var(--border)] bg-[var(--card)] transition-all duration-300 flex flex-col",
+        "shrink-0 border-l border-[var(--border)] bg-[var(--card)] transition-[width] duration-200 ease-out flex flex-col",
         isOpen ? "w-80" : "w-0"
       )}
       style={{ overflow: "hidden" }}
@@ -49,41 +49,47 @@ export function RightSidebar({
 
       {/* Panels container - flex column with proper ordering */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Expanded panels take available space */}
+        {/* Expanded panels take available space - always mount content so state is preserved when collapsed */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {/* GitHub Panel - expanded content */}
-          {githubExpanded && (
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-b border-[var(--border)]">
-              <CollapsibleHeader
-                title="GitHub Repos"
-                icon={<Github className="h-4 w-4" />}
-                isExpanded={true}
-                onToggle={() => setGithubExpanded(false)}
+          {/* GitHub Panel - always mounted, visibility controlled by CSS */}
+          <div
+            className={cn(
+              "flex flex-col min-h-0 border-b border-[var(--border)] transition-all duration-200 overflow-hidden",
+              githubExpanded ? "flex-1" : "flex-none max-h-0 min-h-0 opacity-0 pointer-events-none"
+            )}
+          >
+            <CollapsibleHeader
+              title="GitHub Repos"
+              icon={<Github className="h-4 w-4" />}
+              isExpanded={githubExpanded}
+              onToggle={() => setGithubExpanded(false)}
+            />
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <GitHubReposPanel
+                onSelectRepo={onSelectRepo}
+                isLoading={isLoading}
               />
-              <div className="flex-1 overflow-y-auto">
-                <GitHubReposPanel
-                  onSelectRepo={onSelectRepo}
-                  isLoading={isLoading}
-                />
-              </div>
             </div>
-          )}
+          </div>
 
-          {/* Model Response Panel - expanded content */}
-          {modelExpanded && (
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-b border-[var(--border)]">
-              <CollapsibleHeader
-                title="Model Response"
-                icon={<Cpu className="h-4 w-4" />}
-                isExpanded={true}
-                onToggle={() => setModelExpanded(false)}
-                badge={nodeCount > 0 ? `${nodeCount} nodes` : undefined}
-              />
-              <div className="flex-1 overflow-y-auto">
-                <ModelResponseInline response={modelResponse} />
-              </div>
+          {/* Model Response Panel - always mounted, visibility controlled by CSS */}
+          <div
+            className={cn(
+              "flex flex-col min-h-0 border-b border-[var(--border)] transition-all duration-200 overflow-hidden",
+              modelExpanded ? "flex-1" : "flex-none max-h-0 min-h-0 opacity-0 pointer-events-none"
+            )}
+          >
+            <CollapsibleHeader
+              title="Model Response"
+              icon={<Cpu className="h-4 w-4" />}
+              isExpanded={modelExpanded}
+              onToggle={() => setModelExpanded(false)}
+              badge={nodeCount > 0 ? `${nodeCount} nodes` : undefined}
+            />
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <ModelResponseInline response={modelResponse} />
             </div>
-          )}
+          </div>
         </div>
 
         {/* Collapsed panels stack at the bottom */}

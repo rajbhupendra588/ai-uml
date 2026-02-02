@@ -115,7 +115,7 @@ export function PromptBar({
 
   if (centered) {
     return (
-      <div className="mx-auto w-full max-w-4xl px-4">
+      <div className="mx-auto w-full max-w-6xl px-4">
         <h2 className="mb-4 text-center text-xl font-medium text-[var(--foreground)]">
           What are you working on?
         </h2>
@@ -230,7 +230,7 @@ export function PromptBar({
   }
 
   return (
-    <div className="mx-auto w-full max-w-xl space-y-2">
+    <div className="mx-auto w-full max-w-3xl space-y-2">
       <div className="flex gap-1 rounded-lg bg-[var(--secondary)] p-1">
         <button
           type="button"
