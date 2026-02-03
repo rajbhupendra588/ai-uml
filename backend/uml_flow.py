@@ -6,6 +6,9 @@ import logging
 import re
 from typing import Any
 
+from diagram_validator import validate_and_repair, get_valid_plan
+from langchain_core.messages import HumanMessage, SystemMessage
+
 logger = logging.getLogger("architectai.uml")
 
 # --- Class diagram ---
@@ -40,14 +43,30 @@ Rules (strict):
 - Flow: request → process → response. Include return messages where relevant."""
 
 # --- Use case diagram ---
-USECASE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a USE CASE DIAGRAM.
+USECASE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a COMPLETE USE CASE DIAGRAM.
+
+CRITICAL: Include EVERY actor, use case, and relationship the user specifies. Do NOT summarize, simplify, or reduce the list. If the user lists 5 actors and 25 use cases, your JSON must contain all 5 actors and all 25 use cases (with short but clear names). Missing items makes the diagram useless.
+
 Return ONLY valid JSON with this exact structure:
 {
-  "actors": [ { "id": "a1", "name": "Actor Name" } ],
-  "useCases": [ { "id": "uc1", "name": "Use Case Name" } ],
-  "links": [ { "actorId": "a1", "useCaseId": "uc1", "order": 1 } ]
+  "actors": [ { "id": "a1", "name": "Actor Name" }, ... ],
+  "useCases": [ { "id": "uc1", "name": "Use Case Name" }, ... ],
+  "links": [ { "actorId": "a1", "useCaseId": "uc1", "order": 1 }, ... ],
+  "includes": [ { "from": "ucSendMessage", "to": "ucEncryptMessage" }, ... ],
+  "extends": [ { "from": "ucReceiveMessage", "to": "ucSendNotification" }, ... ],
+  "systemBoundary": "System Name"
 }
-Rules: 1-4 actors, 2-8 use cases. actorId and useCaseId MUST reference existing actor/useCase ids. Keep names SHORT. Add "order": 1, 2, 3... to links for display order."""
+
+Rules:
+- actors: Include every actor the user mentions (e.g. User, Contact, Server, External Service). Use ids like a1, a2, user, contact, server. Up to 15 actors.
+- useCases: Include every use case the user lists (primary, secondary, system). Use ids like uc1, uc2, or short names: ucLogin, ucSendMsg. Up to 50 use cases. Keep "name" readable (2-6 words).
+- links: Every actor–use case association the user describes. actorId and useCaseId MUST be existing ids. "order": 1, 2, 3... for display order.
+- includes: When the user says "A includes B", add { "from": "idOfA", "to": "idOfB" }. Both must be use case ids.
+- extends: When the user says "A extends B", add { "from": "idOfA", "to": "idOfB" }. Both must be use case ids.
+- systemBoundary: If the user asks for a system boundary (e.g. "WhatsApp System"), set this to that label; otherwise omit or null.
+- All ids in links, includes, and extends MUST reference existing actors or use cases from the arrays above.
+
+IMPORTANT: Count the actors and use cases in the user's message. Your JSON must contain at least that many. Outputting only 2-3 use cases when the user listed 20+ is wrong. Prefer a complete diagram over a short one."""
 
 # --- Activity diagram ---
 ACTIVITY_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract an ACTIVITY DIAGRAM.
@@ -139,6 +158,13 @@ def _repair_json(s: str) -> str:
     return s
 
 
+def _safe_id(raw: Any, max_len: int = 20) -> str:
+    """Mermaid-safe node id: alphanumeric and underscore only."""
+    s = (str(raw) if raw is not None else "").strip().replace("-", "_")
+    out = "".join(c if c.isalnum() or c == "_" else "_" for c in s)[:max_len]
+    return out or "n"
+
+
 def _parse_json(raw: str) -> dict:
     """Parse JSON with extraction and repair fallback."""
     text = _extract_json(raw)
@@ -161,8 +187,22 @@ def _invoke_llm(system_prompt: str, user_prompt: str, llm) -> dict:
     return _parse_json(raw)
 
 
+def _uml_fix_hint(diagram_type: str) -> str:
+    """Hint for LLM when fixing invalid UML JSON."""
+    hints = {
+        "class": "Keep 'classes' (name, attributes, methods) and 'relationships' (from, to, type). from/to must be class names.",
+        "sequence": "Keep 'participants' (id, name) and 'messages' (from, to, label, order). from/to must be participant ids.",
+        "usecase": "Keep 'actors', 'useCases', 'links' (actorId, useCaseId, order). Optional: 'includes' and 'extends' arrays with from/to use case ids, 'systemBoundary' string. Ids must match.",
+        "activity": "Keep 'nodes' (id, type: start|activity|decision|end) and 'edges' (from, to, label, order). Exactly one start, one end.",
+        "state": "Keep 'states' (id, name, isInitial, isFinal) and 'transitions' (from, to, label, order). One isInitial.",
+        "component": "Keep 'components' (id, name) and 'dependencies' (from, to, label, order).",
+        "deployment": "Keep 'nodes' (id, name, type: device|executionEnv), 'artifacts' (id, name, nodeId), 'connections' (from, to, label, order).",
+    }
+    return hints.get(diagram_type, "Output only valid JSON matching the required structure.")
+
+
 def plan_uml(diagram_type: str, prompt: str, llm) -> dict:
-    """Return a plan dict for the given UML diagram type (LLM)."""
+    """Return a validated plan dict for the given UML diagram type (LLM)."""
     prompts = {
         "class": CLASS_SYSTEM_PROMPT,
         "sequence": SEQUENCE_SYSTEM_PROMPT,
@@ -176,7 +216,39 @@ def plan_uml(diagram_type: str, prompt: str, llm) -> dict:
     if not sys_prompt or not llm:
         return _mock_plan_uml(diagram_type, prompt)
     try:
-        return _invoke_llm(sys_prompt, prompt, llm)
+        plan = _invoke_llm(sys_prompt, prompt, llm)
+        result = validate_and_repair(diagram_type, plan)
+        if result.is_valid:
+            logger.info("UML plan validation passed", extra={"diagram_type": diagram_type})
+            return plan
+        # One retry with fix prompt
+        if result.errors:
+            try:
+                fix_prompt = f"""The JSON failed validation. Return ONLY the corrected JSON.
+
+Errors:
+{chr(10).join('- ' + e for e in result.errors[:8])}
+
+Current JSON:
+{json.dumps(plan, indent=2)[:1800]}
+
+Original request: {prompt[:200]}
+
+{_uml_fix_hint(diagram_type)}"""
+                messages = [
+                    SystemMessage(content="Output ONLY valid JSON. No markdown, no explanation."),
+                    HumanMessage(content=fix_prompt),
+                ]
+                response = llm.invoke(messages)
+                raw = getattr(response, "content", "") or ""
+                retry_plan = _parse_json(raw)
+                retry_result = validate_and_repair(diagram_type, retry_plan)
+                if retry_result.is_valid:
+                    logger.info("UML plan validation passed after retry", extra={"diagram_type": diagram_type})
+                    return retry_plan
+            except Exception as e:
+                logger.warning("UML validation retry failed: %s", e, extra={"diagram_type": diagram_type})
+        return get_valid_plan(diagram_type, plan)
     except Exception as e:
         logger.exception("UML plan error: %s", e)
         return _mock_plan_uml(diagram_type, prompt)
@@ -203,9 +275,21 @@ def _mock_plan_uml(diagram_type: str, prompt: str) -> dict:
         }
     if diagram_type == "usecase":
         return {
-            "actors": [{"id": "a1", "name": "User"}],
-            "useCases": [{"id": "uc1", "name": "Login"}, {"id": "uc2", "name": "Logout"}],
-            "links": [{"actorId": "a1", "useCaseId": "uc1", "order": 1}, {"actorId": "a1", "useCaseId": "uc2", "order": 2}],
+            "actors": [{"id": "a1", "name": "User"}, {"id": "a2", "name": "Contact"}],
+            "useCases": [
+                {"id": "uc1", "name": "Login"},
+                {"id": "uc2", "name": "Send Message"},
+                {"id": "uc3", "name": "Receive Message"},
+                {"id": "uc4", "name": "Logout"},
+            ],
+            "links": [
+                {"actorId": "a1", "useCaseId": "uc1", "order": 1},
+                {"actorId": "a1", "useCaseId": "uc2", "order": 2},
+                {"actorId": "a2", "useCaseId": "uc3", "order": 3},
+                {"actorId": "a1", "useCaseId": "uc4", "order": 4},
+            ],
+            "includes": [],
+            "extends": [],
         }
     if diagram_type == "activity":
         return {
@@ -371,22 +455,56 @@ def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
         actors = plan.get("actors", [])
         use_cases = plan.get("useCases", [])
         links = sorted(plan.get("links", []), key=lambda l: int(l.get("order", 0)))
-        lines = ["flowchart LR"]
-        # Actors on left
-        for a in actors:
-            aid = (a.get("id") or "a").replace("-", "_")[:20]
+        includes = plan.get("includes", [])
+        extends = plan.get("extends", [])
+        system_boundary = (plan.get("systemBoundary") or "").strip()
+        # uc_id -> first actor id (by actor order) that links to it (for column grouping)
+        uc_to_actor: dict[str, str] = {}
+        actor_ids_ordered = [(a.get("id") or f"a{i}").strip() for i, a in enumerate(actors)]
+        link_pairs = [((link.get("actorId") or "").strip(), (link.get("useCaseId") or "").strip()) for link in links]
+        for aid in actor_ids_ordered:
+            for a, ucid in link_pairs:
+                if a == aid and ucid and ucid not in uc_to_actor:
+                    uc_to_actor[ucid] = aid
+        lines = ["flowchart TB"]
+        # Miro-style: one subgraph per actor column, use cases inside
+        for i, a in enumerate(actors):
+            aid = _safe_id(a.get("id") or "a", 20)
             name = (a.get("name") or aid).replace('"', "'")[:30]
-            lines.append(f'    {aid}[/"👤 {name}"/]')
-        # Use cases on right
-        for uc in use_cases:
-            ucid = (uc.get("id") or "uc").replace("-", "_")[:20]
-            name = (uc.get("name") or ucid).replace('"', "'")[:40]
-            lines.append(f'    {ucid}(("{name}"))')
-        # Links
-        for i, link in enumerate(links):
-            aid = (link.get("actorId") or "a").replace("-", "_")[:20]
-            ucid = (link.get("useCaseId") or "uc").replace("-", "_")[:20]
+            lines.append(f'    subgraph col_{i}["👤 {name}"]')
+            lines.append(f'        {aid}[/"{name}"/]')
+            a_id_strip = (a.get("id") or "").strip()
+            for uc in use_cases:
+                ucid = (uc.get("id") or "").strip()
+                if uc_to_actor.get(ucid) == a_id_strip:
+                    m_ucid = _safe_id(ucid or "uc", 20)
+                    uc_name = (uc.get("name") or ucid).replace('"', "'")[:40]
+                    lines.append(f'        {m_ucid}(("{uc_name}"))')
+            lines.append("    end")
+        # Use cases not linked to any actor go in system boundary column
+        unplaced_ucs = [uc for uc in use_cases if (uc.get("id") or "").strip() not in uc_to_actor]
+        if unplaced_ucs:
+            label = (system_boundary or "System").replace('"', "'")[:50]
+            lines.append(f'    subgraph system["{label}"]')
+            for uc in unplaced_ucs:
+                ucid = _safe_id(uc.get("id") or "uc", 20)
+                name = (uc.get("name") or ucid).replace('"', "'")[:40]
+                lines.append(f'    {ucid}(("{name}"))')
+            lines.append("    end")
+        # Actor–use case links
+        for link in links:
+            aid = _safe_id(link.get("actorId") or "a", 20)
+            ucid = _safe_id(link.get("useCaseId") or "uc", 20)
             lines.append(f"    {aid} --> {ucid}")
+        # Includes / extends (use case to use case)
+        for inc in includes:
+            fr = _safe_id(inc.get("from") or "uc", 20)
+            to = _safe_id(inc.get("to") or "uc", 20)
+            lines.append(f'    {fr} -->|"<<include>>"| {to}')
+        for ext in extends:
+            fr = _safe_id(ext.get("from") or "uc", 20)
+            to = _safe_id(ext.get("to") or "uc", 20)
+            lines.append(f'    {fr} -->|"<<extend>>"| {to}')
         return "\n".join(lines)
 
     if diagram_type == "component":
@@ -472,6 +590,66 @@ def _layout(
     for i, node in enumerate(nodes):
         row, col = divmod(i, cols)
         node["position"] = {"x": start_x + col * effective_width, "y": start_y + row * row_height}
+
+
+def _layout_usecase_swimlane(
+    actor_nodes: list,
+    use_case_nodes: list,
+    links: list,
+    *,
+    start_x: int = 80,
+    start_y: int = 40,
+    column_width: int = 200,
+    actor_row_height: int = 72,
+    use_case_row_height: int = 56,
+) -> None:
+    """
+    Miro-style column layout: one column per actor, use cases stacked under their primary actor.
+    Mutates position on actor_nodes and use_case_nodes.
+    """
+    if not actor_nodes:
+        _layout(actor_nodes + use_case_nodes, width=200, row_height=80)
+        return
+    # uc_id -> list of actor ids that link to this use case (order from links)
+    uc_to_actors: dict[str, list[str]] = {}
+    for link in links:
+        aid = (link.get("actorId") or "").strip()
+        ucid = (link.get("useCaseId") or "").strip()
+        if not aid or not ucid:
+            continue
+        if ucid not in uc_to_actors:
+            uc_to_actors[ucid] = []
+        if aid not in uc_to_actors[ucid]:
+            uc_to_actors[ucid].append(aid)
+    # Actor order (column index)
+    actor_ids = [a.get("id", "") for a in actor_nodes]
+    aid_to_col = {aid: i for i, aid in enumerate(actor_ids)}
+    num_cols = len(actor_ids)
+    # Assign each use case to column: first linked actor by column order; else last column (system)
+    col_to_ucs: dict[int, list[dict]] = {i: [] for i in range(num_cols)}
+    for uc_node in use_case_nodes:
+        ucid = uc_node.get("id", "")
+        linked = uc_to_actors.get(ucid, [])
+        col = num_cols - 1
+        for aid in actor_ids:
+            if aid in linked:
+                col = aid_to_col[aid]
+                break
+        col_to_ucs[col].append(uc_node)
+    # Position actors in a row at top
+    for i, node in enumerate(actor_nodes):
+        node["position"] = {
+            "x": start_x + i * column_width,
+            "y": start_y,
+        }
+    # Position use cases under their column
+    uc_start_y = start_y + actor_row_height
+    for col in range(num_cols):
+        for row, uc_node in enumerate(col_to_ucs[col]):
+            uc_node["position"] = {
+                "x": start_x + col * column_width,
+                "y": uc_start_y + row * use_case_row_height,
+            }
 
 
 def _gen_class(plan: dict) -> dict:
@@ -588,6 +766,8 @@ def _gen_usecase(plan: dict) -> dict:
     actors = plan.get("actors", [])
     use_cases = plan.get("useCases", [])
     raw_links = plan.get("links", [])
+    includes = plan.get("includes", [])
+    extends = plan.get("extends", [])
     # Normalize order; sort by order for numbered display
     links_with_order = []
     for i, link in enumerate(raw_links):
@@ -596,30 +776,52 @@ def _gen_usecase(plan: dict) -> dict:
             link = {**link, "order": i + 1}
         links_with_order.append(link)
     links = sorted(links_with_order, key=lambda l: int(l.get("order", 0)))
-    nodes = []
-    edges = []
+    actor_nodes = []
     for i, a in enumerate(actors):
-        nodes.append({
+        actor_nodes.append({
             "id": a.get("id", f"a{i}"),
             "type": "actor",
             "position": {"x": 0, "y": 0},
             "data": {"label": a.get("name", a.get("id", "Actor"))},
         })
+    use_case_nodes = []
     for i, uc in enumerate(use_cases):
-        nodes.append({
+        use_case_nodes.append({
             "id": uc.get("id", f"uc{i}"),
             "type": "useCase",
             "position": {"x": 0, "y": 0},
             "data": {"label": uc.get("name", uc.get("id", "Use Case"))},
         })
-    _layout(nodes, width=240, row_height=120)
+    # Miro-style: one column per actor, use cases stacked under their primary actor
+    _layout_usecase_swimlane(
+        actor_nodes,
+        use_case_nodes,
+        links,
+        column_width=min(220, max(160, 12000 // max(1, len(actors) + 1))),
+        use_case_row_height=52,
+    )
+    nodes = actor_nodes + use_case_nodes
+    edges = []
     for j, link in enumerate(links):
-        step_label = f"{j + 1}"
         edges.append({
             "id": f"link-{j}",
             "source": link.get("actorId", ""),
             "target": link.get("useCaseId", ""),
-            "label": step_label,
+            "label": str(j + 1),
+        })
+    for j, inc in enumerate(includes):
+        edges.append({
+            "id": f"inc-{j}",
+            "source": inc.get("from", ""),
+            "target": inc.get("to", ""),
+            "label": "includes",
+        })
+    for j, ext in enumerate(extends):
+        edges.append({
+            "id": f"ext-{j}",
+            "source": ext.get("from", ""),
+            "target": ext.get("to", ""),
+            "label": "extends",
         })
     return {"nodes": nodes, "edges": edges}
 

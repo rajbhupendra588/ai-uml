@@ -1,0 +1,20 @@
+# Render Blueprint — deploy backend from repo root
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ai-uml-api
+    runtime: python
+    region: oregon  # or frankfurt, singapore
+    rootDir: backend
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      # Add these in Render Dashboard → Environment (or as secret env vars):
+      # CORS_ORIGINS, FRONTEND_URL, API_BASE_URL, OPENROUTER_API_KEY, SECRET_KEY
+      # Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET

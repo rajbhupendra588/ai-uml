@@ -2,6 +2,8 @@
 
 Generate architecture diagrams, UML diagrams, and high-level designs from natural language using AI.
 
+**Principle:** Keep the app light — minimal dependencies, small bundle, lean runtime. See [docs/PRINCIPLES.md](docs/PRINCIPLES.md).
+
 ![AI-UML](https://img.shields.io/badge/AI-Powered-blue)
 ![React](https://img.shields.io/badge/React-18-61dafb)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
@@ -101,11 +103,17 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Environment Variables
 
-### Backend (.env)
+### 100% free setup (recommended)
+- **Backend:** set only `OPENROUTER_API_KEY` (get a free key at [openrouter.ai](https://openrouter.ai)). Use free models (e.g. Trinity) in the app.
+- **RAG:** leave `PINECONE_API_KEY` and `OPENAI_API_KEY` unset — the app uses built-in best-practice context at no cost.
+- **GitHub (optional):** `GITHUB_TOKEN` for higher rate limit on “From repo”; not required for public repos.
+
+### Backend (.env) — full reference
 ```
 OPENROUTER_API_KEY=your_openrouter_key
 # OR
 OPENAI_API_KEY=your_openai_key
+# Optional: PINECONE_API_KEY + OPENAI_API_KEY for vector RAG (paid embeddings)
 ```
 
 ### Frontend (.env.local)

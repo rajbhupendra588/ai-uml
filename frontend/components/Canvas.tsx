@@ -7,6 +7,7 @@ import {
   Panel,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   ReactFlowProvider,
   addEdge,
   Connection,
@@ -17,6 +18,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { PromptBar } from "./PromptBar";
 import HardwareNode from "./HardwareNode";
 import { WelcomeState } from "./WelcomeState";
@@ -40,8 +42,11 @@ import {
 import {
   getGenerateUrl,
   getGenerateFromRepoUrl,
+  getPlanUrl,
+  getGenerateFromPlanUrl,
   getModelsUrl,
   DEFAULT_MODELS,
+  toValidDiagramType,
   type ModelOption,
 } from "@/lib/api";
 import type { DiagramType } from "@/lib/api";
@@ -53,14 +58,168 @@ import { MermaidDiagram } from "./MermaidDiagram";
 import { ContextPanel, ContextToggle, type ContextMessage } from "./ContextPanel";
 import { RightSidebar, RightSidebarToggle } from "./RightSidebar";
 import { VersionSwitcher, type DiagramVersion } from "./VersionSwitcher";
+import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 
 const EMPTY_NODES: Node[] = [];
+const MAX_UNDO_HISTORY = 50;
+
+type HistorySnapshot = { nodes: Node[]; edges: Edge[] };
+
+function cloneSnapshot(nodes: Node[], edges: Edge[]): HistorySnapshot {
+  return { nodes: structuredClone(nodes), edges: structuredClone(edges) };
+}
+
+/** Listens to keyboard and calls callbacks; must be rendered inside ReactFlow to use fitView. */
+function CanvasKeyboardShortcuts({
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  onNewDiagram,
+  onOpenExport,
+  onToggleContext,
+  onToggleSidebar,
+  onShowHelp,
+  onCloseOverlays,
+}: {
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onNewDiagram: () => void;
+  onOpenExport: () => void;
+  onToggleContext: () => void;
+  onToggleSidebar: () => void;
+  onShowHelp: () => void;
+  onCloseOverlays?: () => void;
+}) {
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target?.closest?.("input, textarea, [contenteditable='true']")) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (canRedo) onRedo();
+        } else {
+          if (canUndo) onUndo();
+        }
+        return;
+      }
+      if (mod && e.key === "0") {
+        e.preventDefault();
+        fitView?.();
+        return;
+      }
+      if (mod && e.key === "n") {
+        e.preventDefault();
+        onNewDiagram();
+        return;
+      }
+      if (mod && e.key === "e") {
+        e.preventDefault();
+        onOpenExport();
+        return;
+      }
+      if (mod && e.key === "1") {
+        e.preventDefault();
+        onToggleContext();
+        return;
+      }
+      if (mod && e.key === "2") {
+        e.preventDefault();
+        onToggleSidebar();
+        return;
+      }
+      if (e.key === "?") {
+        e.preventDefault();
+        onShowHelp();
+        return;
+      }
+      if (e.key === "Escape") {
+        onCloseOverlays?.();
+        return;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    fitView,
+    canUndo,
+    canRedo,
+    onUndo,
+    onRedo,
+    onNewDiagram,
+    onOpenExport,
+    onToggleContext,
+    onToggleSidebar,
+    onShowHelp,
+    onCloseOverlays,
+  ]);
+  return null;
+}
+
+/** Summarize diagram plan for preview (no new deps). */
+function summarizePlan(plan: Record<string, unknown>, diagramType: DiagramType): string {
+  if (diagramType === "architecture") {
+    const comps = plan.components as Array<{ name?: string }> | undefined;
+    if (Array.isArray(comps) && comps.length) {
+      return comps.map((c) => c.name || "?").join(", ");
+    }
+  }
+  if (diagramType === "hld") {
+    const layers = plan.layers as Record<string, Array<{ name?: string }>> | undefined;
+    if (layers && typeof layers === "object") {
+      const parts: string[] = [];
+      for (const [layer, items] of Object.entries(layers)) {
+        if (Array.isArray(items) && items.length) {
+          parts.push(`${layer}: ${items.map((i) => i.name || "?").join(", ")}`);
+        }
+      }
+      if (parts.length) return parts.join(" · ");
+    }
+  }
+  if (diagramType === "mindtree") {
+    const nodes = plan.nodes as Array<{ label?: string }> | undefined;
+    if (Array.isArray(nodes) && nodes.length) {
+      return nodes.map((n) => n.label || "?").join(" → ");
+    }
+  }
+  if (diagramType === "usecase") {
+    const actors = plan.actors as Array<{ name?: string }> | undefined;
+    const useCases = plan.useCases as Array<{ name?: string }> | undefined;
+    const a = Array.isArray(actors) && actors.length ? actors.map((x) => x.name || "?").join(", ") : "";
+    const u = Array.isArray(useCases) && useCases.length ? useCases.map((x) => x.name || "?").join(", ") : "";
+    if (a || u) return [a, u].filter(Boolean).join(" · ");
+  }
+  if (diagramType === "class") {
+    const classes = plan.classes as Array<{ name?: string }> | undefined;
+    if (Array.isArray(classes) && classes.length) {
+      return classes.map((c) => c.name || "?").join(", ");
+    }
+  }
+  if (diagramType === "sequence") {
+    const participants = plan.participants as Array<{ name?: string; id?: string }> | undefined;
+    if (Array.isArray(participants) && participants.length) {
+      return participants.map((p) => p.name || p.id || "?").join(" → ");
+    }
+  }
+  return "Plan ready";
+}
 
 function CanvasInner() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(EMPTY_NODES);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [nodes, setNodes, onNodesChangeBase] = useNodesState(EMPTY_NODES);
+  const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [diagramType, setDiagramType] = useState<DiagramType>("architecture");
+  const [planFirstMode, setPlanFirstMode] = useState(false);
+  const [pendingPlan, setPendingPlan] = useState<{
+    diagram_plan: Record<string, unknown>;
+    diagram_type: DiagramType;
+    prompt: string;
+  } | null>(null);
   const [explanation, setExplanation] = useState<string | null>(null);
   const [modelResponse, setModelResponse] = useState<ModelResponse | null>(null);
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODELS);
@@ -74,6 +233,12 @@ function CanvasInner() {
   const [contextMessages, setContextMessages] = useState<ContextMessage[]>([]);
   const [diagramVersions, setDiagramVersions] = useState<DiagramVersion[]>([]);
   const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  // Undo/redo history (only for React Flow canvas; not for Mermaid view)
+  const [past, setPast] = useState<HistorySnapshot[]>([]);
+  const [future, setFuture] = useState<HistorySnapshot[]>([]);
+  const skipNextPushRef = useRef(false);
   const lastPromptRef = useRef<string>("");
   const flowContainerRef = useRef<HTMLDivElement>(null);
 
@@ -148,6 +313,76 @@ function CanvasInner() {
     }
   }, [contextMessages]);
 
+  const pushPast = useCallback(() => {
+    if (skipNextPushRef.current) {
+      skipNextPushRef.current = false;
+      return;
+    }
+    setPast((prev) => {
+      const next = [...prev, cloneSnapshot(nodes, edges)].slice(-MAX_UNDO_HISTORY);
+      return next;
+    });
+    setFuture([]);
+  }, [nodes, edges]);
+
+  const undo = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const prev = p[p.length - 1];
+      skipNextPushRef.current = true;
+      setFuture((f) => [...f, cloneSnapshot(nodes, edges)]);
+      setNodes(prev.nodes);
+      setEdges(prev.edges);
+      toast.success("Undo");
+      return p.slice(0, -1);
+    });
+  }, [nodes, edges, setNodes, setEdges]);
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[f.length - 1];
+      skipNextPushRef.current = true;
+      setPast((p) => [...p, cloneSnapshot(nodes, edges)]);
+      setNodes(next.nodes);
+      setEdges(next.edges);
+      toast.success("Redo");
+      return f.slice(0, -1);
+    });
+  }, [nodes, edges, setNodes, setEdges]);
+
+  const handleNewDiagram = useCallback(() => {
+    setDiagramCode(null);
+    setNodes(EMPTY_NODES);
+    setEdges([]);
+    setPast([]);
+    setFuture([]);
+    setEditingNode(null);
+    setPendingPlan(null);
+    setDiagramVersions([]);
+    setSelectedVersionIndex(0);
+    setExplanation(null);
+    toast.success("New diagram");
+  }, [setNodes, setEdges]);
+
+  const onNodesChange = useCallback(
+    (changes: Parameters<typeof onNodesChangeBase>[0]) => {
+      const hasRemove = changes.some((c: { type?: string }) => c.type === "remove");
+      if (hasRemove) pushPast();
+      onNodesChangeBase(changes);
+    },
+    [onNodesChangeBase, pushPast]
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: Parameters<typeof onEdgesChangeBase>[0]) => {
+      const hasRemove = changes.some((c: { type?: string }) => c.type === "remove");
+      if (hasRemove) pushPast();
+      onEdgesChangeBase(changes);
+    },
+    [onEdgesChangeBase, pushPast]
+  );
+
   const { theme } = useTheme();
 
   const nodeTypes = useMemo(
@@ -177,6 +412,7 @@ function CanvasInner() {
 
   const onConnect = useCallback(
     (params: Edge | Connection) => {
+      pushPast();
       const newEdge = {
         ...params,
         type: "mermaid",
@@ -185,8 +421,12 @@ function CanvasInner() {
       };
       setEdges((eds) => addEdge(newEdge, eds));
     },
-    [setEdges]
+    [setEdges, pushPast]
   );
+
+  const onNodeDragStart = useCallback(() => {
+    pushPast();
+  }, [pushPast]);
 
   // Convert edges to Mermaid-style edges
   const convertToMermaidEdges = useCallback((edges: Edge[]): Edge[] => {
@@ -204,13 +444,58 @@ function CanvasInner() {
   }, []);
 
   const handlePrompt = useCallback(async (prompt: string) => {
-    lastPromptRef.current = prompt;
+    const trimmedPrompt = (prompt ?? "").trim();
+    lastPromptRef.current = trimmedPrompt;
     setLoading(true);
+    setPendingPlan(null);
     try {
+      if (!trimmedPrompt) {
+        toast.error("Please enter a prompt.");
+        setLoading(false);
+        return;
+      }
+      const diagramTypeToSend = toValidDiagramType(diagramType);
+
+      if (planFirstMode) {
+        const response = await fetch(getPlanUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: trimmedPrompt,
+            diagram_type: diagramTypeToSend,
+            model: selectedModel || null,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          const message =
+            typeof data.detail === "string"
+              ? data.detail
+              : Array.isArray(data.detail) && data.detail[0]?.msg
+                ? `${data.detail[0].loc?.join(".") ?? "request"}: ${data.detail[0].msg}`
+                : "Plan generation failed.";
+          toast.error(message);
+          setLoading(false);
+          return;
+        }
+        setPendingPlan({
+          diagram_plan: data.diagram_plan as Record<string, unknown>,
+          diagram_type: (data.diagram_type as DiagramType) || diagramType,
+          prompt: trimmedPrompt,
+        });
+        toast.success("Plan ready — confirm to generate diagram");
+        setLoading(false);
+        return;
+      }
+
       const response = await fetch(getGenerateUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, diagram_type: diagramType, model: selectedModel }),
+        body: JSON.stringify({
+          prompt: trimmedPrompt,
+          diagram_type: diagramTypeToSend,
+          model: selectedModel || null,
+        }),
       });
 
       const data = await response.json();
@@ -219,7 +504,9 @@ function CanvasInner() {
         const message =
           typeof data.detail === "string"
             ? data.detail
-            : "Diagram generation failed. Please try again.";
+            : Array.isArray(data.detail) && data.detail[0]?.msg
+              ? `${data.detail[0].loc?.join(".") ?? "request"}: ${data.detail[0].msg}`
+              : "Diagram generation failed. Please try again.";
         toast.error(message, {
           action: {
             label: "Retry",
@@ -251,13 +538,15 @@ function CanvasInner() {
         setDiagramCode(mermaidCode);
         setNodes(EMPTY_NODES);
         setEdges([]);
+        setPast([]);
+        setFuture([]);
         // Add to context history
         setContextMessages((prev) => [
           ...prev,
           {
             id: `user-${Date.now()}`,
             role: "user",
-            content: prompt,
+            content: trimmedPrompt,
             timestamp: new Date(),
           },
           {
@@ -285,7 +574,86 @@ function CanvasInner() {
     } finally {
       setLoading(false);
     }
-  }, [diagramType, selectedModel, setNodes, setEdges]);
+  }, [diagramType, selectedModel, planFirstMode, setNodes, setEdges]);
+
+  const handleConfirmPlan = useCallback(async () => {
+    if (!pendingPlan) return;
+    setLoading(true);
+    try {
+      const response = await fetch(getGenerateFromPlanUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          diagram_plan: pendingPlan.diagram_plan,
+          diagram_type: toValidDiagramType(pendingPlan.diagram_type),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof data.detail === "string"
+            ? data.detail
+            : Array.isArray(data.detail) && data.detail[0]?.msg
+              ? `${data.detail[0].loc?.join(".") ?? "request"}: ${data.detail[0].msg}`
+              : "Diagram generation failed.";
+        toast.error(message);
+        setLoading(false);
+        return;
+      }
+      const mermaidCode = data.mermaid ?? "";
+      const versions: DiagramVersion[] = data.versions ?? [];
+      const explanationText =
+        typeof data.explanation === "string" && data.explanation.trim()
+          ? data.explanation.trim()
+          : null;
+      setExplanation(explanationText);
+      setModelResponse({
+        nodes: [],
+        edges: [],
+        explanation: explanationText ?? undefined,
+      });
+      setDiagramVersions(versions);
+      setSelectedVersionIndex(0);
+      if (mermaidCode) {
+        setDiagramCode(mermaidCode);
+        setNodes(EMPTY_NODES);
+        setEdges([]);
+        setPast([]);
+        setFuture([]);
+        setContextMessages((prev) => [
+          ...prev,
+          {
+            id: `user-${Date.now()}`,
+            role: "user",
+            content: pendingPlan.prompt,
+            timestamp: new Date(),
+          },
+          {
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: explanationText || "Diagram generated",
+            timestamp: new Date(),
+            diagramType: pendingPlan.diagram_type,
+          },
+        ]);
+        toast.success("Diagram generated");
+      } else {
+        setDiagramCode(null);
+        toast.warning("No diagram returned.");
+      }
+      setPendingPlan(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Network error.";
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [pendingPlan, setNodes, setEdges]);
+
+  const handleCancelPlan = useCallback(() => {
+    setPendingPlan(null);
+  }, []);
 
   const handleGenerateFromRepo = useCallback(
     async (repoUrl: string) => {
@@ -295,9 +663,9 @@ function CanvasInner() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            repo_url: repoUrl,
-            diagram_type: diagramType,
-            model: selectedModel,
+            repo_url: (repoUrl || "").trim(),
+            diagram_type: toValidDiagramType(diagramType),
+            model: selectedModel || null,
           }),
         });
 
@@ -307,7 +675,9 @@ function CanvasInner() {
           const message =
             typeof data.detail === "string"
               ? data.detail
-              : "Repo analysis or diagram generation failed. Please try again.";
+              : Array.isArray(data.detail) && data.detail[0]?.msg
+                ? `${data.detail[0].loc?.join(".") ?? "request"}: ${data.detail[0].msg}`
+                : "Repo analysis or diagram generation failed. Please try again.";
           toast.error(message);
           return;
         }
@@ -320,10 +690,14 @@ function CanvasInner() {
             : null;
 
         setExplanation(explanationText);
+        const repoUrlReturned = typeof data.repo_url === "string" ? data.repo_url : undefined;
+        const repoExplanationReturned = typeof data.repo_explanation === "string" ? data.repo_explanation : undefined;
         setModelResponse({
           nodes: [],
           edges: [],
           explanation: explanationText ?? undefined,
+          repo_url: repoUrlReturned,
+          repo_explanation: repoExplanationReturned,
         });
         
         // Store versions and reset selected index
@@ -334,6 +708,8 @@ function CanvasInner() {
           setDiagramCode(mermaidCode);
           setNodes(EMPTY_NODES);
           setEdges([]);
+          setPast([]);
+          setFuture([]);
           // Add to context history
           setContextMessages((prev) => [
             ...prev,
@@ -389,9 +765,14 @@ function CanvasInner() {
 
   const handlePrepareExport = useCallback((exportFn: () => Promise<void>) => {
     setIsExporting(true);
-    requestAnimationFrame(() => {
-      exportFn().finally(() => setIsExporting(false));
-    });
+    // Wait for React to commit and hide Download/UI so they don't appear in the export
+    setTimeout(async () => {
+      try {
+        await exportFn();
+      } finally {
+        setIsExporting(false);
+      }
+    }, 80);
   }, []);
 
   const handleNodeDoubleClick = useCallback(
@@ -401,13 +782,14 @@ function CanvasInner() {
 
   const handleEditSave = useCallback(
     (nodeId: string, data: Record<string, unknown>) => {
+      pushPast();
       setNodes((prev) =>
         prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n))
       );
       setEditingNode(null);
       toast.success("Node updated");
     },
-    [setNodes]
+    [setNodes, pushPast]
   );
 
   const handleEditCancel = useCallback(() => {
@@ -491,17 +873,19 @@ function CanvasInner() {
 
       {/* Main content area */}
       <div 
-        className="grid h-full min-w-0 flex-1 bg-canvas transition-colors duration-300" 
-        style={{ gridTemplateRows: "1fr auto" }}
+        className="grid h-full min-h-0 min-w-0 flex-1 bg-canvas transition-colors duration-300" 
+        style={{ gridTemplateRows: "minmax(0, 1fr) auto" }}
       >
-        {/* Main diagram area - takes remaining space */}
+        {/* Main diagram area - constrained to viewport, diagram fits or scrolls inside */}
         <div
           ref={flowContainerRef}
+          role="main"
+          aria-label={diagramCode ? "Rendered diagram" : "Diagram canvas"}
           data-exporting={isExporting ? "true" : undefined}
-          className="relative overflow-hidden bg-canvas transition-colors duration-300 data-[exporting=true]:[&_[data-diagram-download-hide]]:invisible"
+          className="relative min-h-0 min-w-0 overflow-auto bg-canvas transition-colors duration-300 data-[exporting=true]:[&_[data-diagram-download-hide]]:invisible"
         >
           {diagramCode ? (
-            <MermaidDiagram code={diagramCode} className="h-full w-full" />
+            <MermaidDiagram code={diagramCode} className="h-full min-h-0 w-full min-w-0" />
           ) : (
             <ReactFlow
               nodes={nodes}
@@ -511,6 +895,7 @@ function CanvasInner() {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              onNodeDragStart={onNodeDragStart}
               onNodeDoubleClick={handleNodeDoubleClick}
               defaultEdgeOptions={{ 
                 type: "mermaid", 
@@ -529,12 +914,28 @@ function CanvasInner() {
                 size={1}
                 color={theme === "dark" ? "rgba(71, 85, 105, 0.35)" : "rgba(71, 85, 105, 0.2)"}
               />
+              <CanvasKeyboardShortcuts
+                onUndo={undo}
+                onRedo={redo}
+                canUndo={past.length > 0}
+                canRedo={future.length > 0}
+                onNewDiagram={handleNewDiagram}
+                onOpenExport={() => setDownloadMenuOpen(true)}
+                onToggleContext={() => setShowContextPanel((p) => !p)}
+                onToggleSidebar={() => setShowRightSidebar((p) => !p)}
+                onShowHelp={() => setShowHelp(true)}
+                onCloseOverlays={() => {
+                  setEditingNode(null);
+                  setShowHelp(false);
+                }}
+              />
               {selectedNode && !editingNode && (
                 <Panel position="top-center" className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => openEditForNode(selectedNode)}
-                    className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-sm font-medium text-[var(--card-foreground)] shadow hover:bg-[var(--secondary)]"
+                    className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-sm font-medium text-[var(--card-foreground)] shadow hover:bg-[var(--secondary)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+                    aria-label="Edit selected node text"
                   >
                     Edit text
                   </button>
@@ -551,6 +952,8 @@ function CanvasInner() {
               diagramCode={diagramCode}
               onPrepareExport={handlePrepareExport}
               disabled={loading}
+              open={downloadMenuOpen}
+              onOpenChange={setDownloadMenuOpen}
             />
           )}
 
@@ -604,6 +1007,35 @@ function CanvasInner() {
           )}
 
           {loading && <GeneratingOverlay />}
+
+          {pendingPlan && !loading && (
+            <div
+              data-diagram-download-hide
+              className="absolute bottom-20 left-1/2 z-20 w-full max-w-xl -translate-x-1/2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-lg"
+            >
+              <p className="text-xs font-medium text-[var(--muted)]">Plan preview</p>
+              <p className="mt-1 line-clamp-2 text-sm text-[var(--foreground)]">
+                {summarizePlan(pendingPlan.diagram_plan, pendingPlan.diagram_type)}
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button
+                  size="sm"
+                  className="bg-[var(--primary)] text-white hover:opacity-90"
+                  onClick={handleConfirmPlan}
+                >
+                  Generate diagram
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-[var(--border)]"
+                  onClick={handleCancelPlan}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Bottom control bar - always visible */}
@@ -618,6 +1050,17 @@ function CanvasInner() {
               isOpen={showContextPanel}
               messageCount={contextMessages.length}
             />
+            <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted">
+              <input
+                type="checkbox"
+                checked={planFirstMode}
+                onChange={(e) => setPlanFirstMode(e.target.checked)}
+                disabled={loading}
+                className="rounded border-[var(--border)]"
+                aria-label="Preview plan first"
+              />
+              <span>Preview plan first</span>
+            </label>
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-muted">
                 Diagram:
@@ -639,7 +1082,40 @@ function CanvasInner() {
                 disabled={loading}
               />
             </div>
+            {!showWelcome && !diagramCode && (
+              <div className="flex items-center gap-1" role="group" aria-label="Undo redo">
+                <button
+                  type="button"
+                  onClick={undo}
+                  disabled={past.length === 0 || loading}
+                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-50 disabled:pointer-events-none"
+                  title="Undo (Ctrl+Z)"
+                  aria-label="Undo"
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={redo}
+                  disabled={future.length === 0 || loading}
+                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-50 disabled:pointer-events-none"
+                  title="Redo (Ctrl+Shift+Z)"
+                  aria-label="Redo"
+                >
+                  Redo
+                </button>
+              </div>
+            )}
             <ThemeToggle />
+            <button
+              type="button"
+              onClick={() => setShowHelp(true)}
+              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] p-2 text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+              title="Keyboard shortcuts (?)"
+              aria-label="Show keyboard shortcuts"
+            >
+              <span className="text-lg font-medium">?</span>
+            </button>
             <RightSidebarToggle
               onClick={() => setShowRightSidebar((prev) => !prev)}
               isOpen={showRightSidebar}
@@ -665,6 +1141,8 @@ function CanvasInner() {
         isLoading={loading}
         modelResponse={modelResponse}
       />
+
+      <KeyboardShortcutsHelp isOpen={showHelp} onClose={() => setShowHelp(false)} />
     </div>
   );
 }

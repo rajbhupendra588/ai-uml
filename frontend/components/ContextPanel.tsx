@@ -89,7 +89,7 @@ export function ContextPanel({
     <div
       className={cn(
         "shrink-0 border-r border-[var(--border)] bg-[var(--card)] transition-[width] duration-200 ease-out flex flex-col",
-        isOpen ? "w-80" : "w-0"
+        isOpen ? "w-80 max-w-[min(20rem,100vw)]" : "w-0"
       )}
       style={{ overflow: "hidden" }}
     >
@@ -107,8 +107,9 @@ export function ContextPanel({
             <button
               type="button"
               onClick={onClearHistory}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--accent)] hover:text-red-500"
+              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--accent)] hover:text-red-500"
               title="Clear history"
+              aria-label="Clear conversation history"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -116,8 +117,9 @@ export function ContextPanel({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             title="Close"
+            aria-label="Close context panel"
           >
             <PanelLeftClose className="h-4 w-4" />
           </button>
@@ -239,12 +241,14 @@ export function ContextToggle({ onClick, isOpen, messageCount }: ContextTogglePr
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition",
+        "flex min-h-[44px] items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition",
         isOpen
           ? "border-[var(--primary)] bg-[var(--primary)]/20 text-[var(--primary)]"
           : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--secondary)]"
       )}
-      title={isOpen ? "Hide context" : "Show context"}
+      title={isOpen ? "Hide context (Ctrl+1)" : "Show context (Ctrl+1)"}
+      aria-label={isOpen ? "Hide context panel" : "Show context panel"}
+      aria-expanded={isOpen}
     >
       <MessageSquare className="h-4 w-4" />
       <span className="hidden sm:inline">Context</span>

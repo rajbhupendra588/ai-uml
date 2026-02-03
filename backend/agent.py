@@ -8,6 +8,8 @@ import os
 import re
 from dotenv import load_dotenv
 
+from diagram_validator import validate_and_repair, get_valid_plan
+
 load_dotenv()
 logger = logging.getLogger("architectai.agent")
 
@@ -39,6 +41,64 @@ def _extract_json(text: str) -> dict:
             pass
     
     raise ValueError(f"Could not extract JSON from response: {text[:200]}")
+
+
+def _validate_and_retry(
+    diagram_type: str,
+    plan: dict,
+    prompt: str,
+    llm_to_use,
+    fix_system_hint: str,
+) -> tuple[dict, bool, bool]:
+    """
+    Validate diagram plan; if invalid, attempt one LLM retry with error feedback.
+    Returns (final_plan, validation_passed, retry_used).
+    """
+    result = validate_and_repair(diagram_type, plan)
+    if result.is_valid:
+        logger.info(
+            "Diagram validation passed",
+            extra={"diagram_type": diagram_type, "retry_used": False},
+        )
+        return (plan, True, False)
+
+    # One retry with fix prompt
+    if llm_to_use and result.errors:
+        try:
+            fix_prompt = f"""The following JSON failed validation. Return ONLY the corrected JSON, no markdown or explanation.
+
+Validation errors:
+{chr(10).join('- ' + e for e in result.errors[:8])}
+
+Current (invalid) JSON:
+{json.dumps(plan, indent=2)[:2000]}
+
+User's original request: {prompt[:300]}
+
+{fix_system_hint}"""
+            messages = [
+                SystemMessage(content="You fix JSON to satisfy the validation errors. Output ONLY valid JSON."),
+                HumanMessage(content=fix_prompt),
+            ]
+            response = llm_to_use.invoke(messages)
+            retry_plan = _extract_json(response.content)
+            retry_result = validate_and_repair(diagram_type, retry_plan)
+            if retry_result.is_valid:
+                logger.info(
+                    "Diagram validation passed after retry",
+                    extra={"diagram_type": diagram_type, "retry_used": True},
+                )
+                return (retry_plan, True, True)
+        except Exception as e:
+            logger.warning("Validation retry failed: %s", e, extra={"diagram_type": diagram_type})
+
+    final = get_valid_plan(diagram_type, plan)
+    logger.info(
+        "Diagram plan used repaired/fallback",
+        extra={"diagram_type": diagram_type, "errors": result.errors[:3]},
+    )
+    return (final, False, True)
+
 
 # --- State Definition ---
 class AgentState(TypedDict):
@@ -164,13 +224,13 @@ def _plan_hld(prompt: str, llm_to_use, context_str: str) -> dict:
         return {"layers": layers, "flows": flows, "type": "hld"}
     
     # REAL INTELLIGENCE (LLM) for HLD
-    system_prompt = f"""You are a Senior Solutions Architect creating a detailed High-Level Design (HLD).
-    Analyze the user's request and create a comprehensive system design.
-    
-    BEST PRACTICES / CONTEXT:
-    - {context_str}
-    
-    Return ONLY a JSON object with this structure:
+    system_prompt = f"""You are a Senior Solutions Architect creating a detailed High-Level Design (HLD). Analyze the user's request and create a comprehensive system design.
+
+BEST PRACTICES / CONTEXT:
+- {context_str}
+
+Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
+Required structure:
     {{
         "layers": {{
             "presentation": [
@@ -221,8 +281,57 @@ def _plan_hld(prompt: str, llm_to_use, context_str: str) -> dict:
             },
             "flows": []
         }
-    
+
     return plan
+
+
+def _plan_mindtree(prompt: str, llm_to_use) -> dict:
+    """Plan a mind tree / mind map: root + branches (nodes with parentId)."""
+    if not has_llm:
+        p = prompt.lower()
+        nodes = [{"id": "n0", "label": "Central Idea", "parentId": None}]
+        if any(w in p for w in ["project", "plan"]):
+            nodes.extend([
+                {"id": "n1", "label": "Goals", "parentId": "n0"},
+                {"id": "n2", "label": "Tasks", "parentId": "n0"},
+                {"id": "n3", "label": "Resources", "parentId": "n0"},
+            ])
+        else:
+            nodes.extend([
+                {"id": "n1", "label": "Branch A", "parentId": "n0"},
+                {"id": "n2", "label": "Branch B", "parentId": "n0"},
+            ])
+        return {"nodes": nodes}
+
+    system_prompt = """You are an expert at creating mind maps. Turn the user's topic into a clear, visual mind map: one central concept with 3–6 main branches, and 1–4 sub-ideas per branch where it helps.
+
+Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
+Required structure:
+{
+  "nodes": [
+    { "id": "n0", "label": "Central topic (one short phrase)", "parentId": null },
+    { "id": "n1", "label": "Main branch 1", "parentId": "n0" },
+    { "id": "n2", "label": "Main branch 2", "parentId": "n0" },
+    { "id": "n3", "label": "Sub-idea of branch 1", "parentId": "n1" }
+  ]
+}
+Rules:
+- Exactly one root: the node with parentId null (id "n0"). This is the central idea.
+- Every other node has parentId set to an existing node id. Use ids n0, n1, n2, n3, ...
+- Use 6–18 nodes total: 1 root + 3–6 main branches from root + sub-branches for important ideas.
+- Labels: short and punchy (1–5 words). Use clear nouns or short phrases, like real mind map bubbles.
+- Balance the tree: avoid one branch with many children and others empty; 1–4 children per node is ideal."""
+
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+    try:
+        response = (llm_to_use or llm).invoke(messages)
+        plan = _extract_json(response.content)
+        if "nodes" not in plan or not isinstance(plan["nodes"], list):
+            plan = {"nodes": [{"id": "n0", "label": "Central Idea", "parentId": None}, {"id": "n1", "label": "Branch", "parentId": "n0"}]}
+        return plan
+    except Exception as e:
+        logger.exception("Mind tree LLM error: %s", e)
+        return {"nodes": [{"id": "n0", "label": "Central Idea", "parentId": None}, {"id": "n1", "label": "Branch", "parentId": "n0"}]}
 
 
 def planner_node(state: AgentState):
@@ -247,9 +356,27 @@ def planner_node(state: AgentState):
     # Route to appropriate planner
     if diagram_type == "hld":
         plan = _plan_hld(prompt, llm_to_use, context_str)
+        plan, _valid, _retry = _validate_and_retry(
+            "hld",
+            plan,
+            prompt,
+            llm_to_use,
+            "Keep 'layers' (presentation, application, business, data, external, infrastructure) and 'flows' with from, to, label.",
+        )
+        return {"diagram_plan": plan}
+
+    if diagram_type == "mindtree":
+        plan = _plan_mindtree(prompt, llm_to_use)
+        plan, _valid, _retry = _validate_and_retry(
+            "mindtree",
+            plan,
+            prompt,
+            llm_to_use,
+            "Keep 'nodes' array with objects: id, label, parentId (null for root).",
+        )
         return {"diagram_plan": plan}
     
-    if diagram_type not in ("architecture", "hld"):
+    if diagram_type not in ("architecture", "hld", "mindtree"):
         from uml_flow import plan_uml
         plan = plan_uml(diagram_type, prompt, llm_to_use)
         return {"diagram_plan": plan}
@@ -294,26 +421,34 @@ def planner_node(state: AgentState):
         return {"diagram_plan": {"components": components}}
 
     # REAL INTELLIGENCE (LLM) for Architecture
-    system_prompt = f"""You are a Senior Solutions Architect. 
-    Analyze the user's request and list the necessary IT components.
-    
-    BEST PRACTICES / CONTEXT:
-    - {context_str}
-    
-    Return ONLY a JSON object with a key 'components' containing a list of component names and their types.
-    Possible Types: 'server', 'database', 'auth', 'balancer', 'client', 'function', 'queue'.
-    
-    Example: {{"components": [{{"name": "Auth", "type": "auth"}}, {{"name": "DB", "type": "database"}}]}}
-    """
+    system_prompt = f"""You are a Senior Solutions Architect. Analyze the user's request and list the necessary IT components.
+
+BEST PRACTICES / CONTEXT:
+- {context_str}
+
+Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
+Required structure: a single key "components" with an array of objects. Each object must have "name" (string) and "type" (string).
+Allowed types: server, database, auth, balancer, client, function, queue, gateway, cdn, cache, search, storage, external, monitoring.
+
+Example: {{"components": [{{"name": "Auth Service", "type": "auth"}}, {{"name": "PostgreSQL", "type": "database"}}, {{"name": "API Gateway", "type": "gateway"}}]}}
+Use 3-12 components. Be specific with names and types."""
     
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+    raw_plan = None
     try:
         response = (llm_to_use or llm).invoke(messages)
         logger.debug("LLM raw response: %s", response.content[:500] if response.content else "<empty>")
-        plan = _extract_json(response.content)
+        raw_plan = _extract_json(response.content)
+        plan, _valid, _retry = _validate_and_retry(
+            "architecture",
+            raw_plan,
+            prompt,
+            (llm_to_use or llm),
+            "Keep 'components' as a list of objects with 'name' and 'type'. Types: server, database, auth, balancer, client, function, queue, gateway.",
+        )
     except Exception as e:
         logger.exception("LLM error: %s", e)
-        plan = {"components": [{"name": "Error Fallback", "type": "server"}]}
+        plan = get_valid_plan("architecture", raw_plan if isinstance(raw_plan, dict) else {})
     
     return {"diagram_plan": plan}
 
@@ -875,6 +1010,81 @@ def _sanitize_mermaid_label(text: str) -> str:
     return text
 
 
+def _mindtree_to_mermaid(plan: dict) -> str:
+    """
+    Generate Mermaid native mindmap diagram from plan (nodes with id, label, parentId).
+    Uses indentation-based hierarchy so Mermaid renders a proper radial/organic mind map,
+    not a flowchart. Root is rendered as central node; children branch out by indentation.
+    """
+    nodes = plan.get("nodes", [])
+    if not nodes:
+        return "mindmap\n  ((Central Idea))"
+
+    # Build id -> node and parentId -> list of children (order preserved)
+    by_id: dict[str, dict] = {}
+    children: dict[str | None, list[dict]] = {None: []}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nid = (n.get("id") or "").strip()
+        if not nid:
+            continue
+        by_id[nid] = n
+        pid = n.get("parentId")
+        if pid is None:
+            children.setdefault(None, []).append(n)
+        else:
+            parent_str = (pid if isinstance(pid, str) else str(pid)).strip()
+            children.setdefault(parent_str, []).append(n)
+
+    def sanitize_mindmap_label(s: str) -> str:
+        """Label safe for mindmap outline: no newlines, brackets escaped for shape ambiguity."""
+        t = _sanitize_mermaid_label((s or "").strip()[:60])
+        # Avoid )) or (( inside text so root shape parses correctly
+        return t.replace("))", ") ").replace("((", "( ").strip() or "Branch"
+
+    def emit_tree(parent_id: str | None, depth: int) -> list[str]:
+        out: list[str] = []
+        for child in children.get(parent_id, []):
+            label = sanitize_mindmap_label(child.get("label") or child.get("id") or "Node")
+            indent = "  " * (depth + 1)
+            cid = (child.get("id") or "").strip()
+            if depth == 0 and parent_id is None:
+                # Root: circle for central node
+                out.append(f"{indent}(({label}))")
+            else:
+                # Rounded rectangle for branches (softer than default block)
+                out.append(f"{indent}({label})")
+            out.extend(emit_tree(cid, depth + 1))
+        return out
+
+    # Find root(s): nodes with parentId None, or first node if none
+    roots = children.get(None, [])
+    if not roots and by_id:
+        # No explicit root: pick first node as root
+        first_id = next(iter(by_id))
+        roots = [by_id[first_id]]
+
+    lines = ["mindmap"]
+    if not roots:
+        lines.append("  ((Central Idea))")
+    else:
+        for root in roots:
+            root_label = sanitize_mindmap_label(root.get("label") or root.get("id") or "Central Idea")
+            lines.append(f"  (({root_label}))")
+            lines.extend(emit_tree((root.get("id") or "").strip(), 1))
+
+    return "\n".join(lines)
+
+
+def _mindtree_to_mermaid_tidy(plan: dict) -> str:
+    """Same as _mindtree_to_mermaid but with tidy-tree layout (clean hierarchical tree)."""
+    body = _mindtree_to_mermaid(plan)
+    if body.startswith("mindmap"):
+        return "---\nconfig:\n  layout: tidy-tree\n---\n" + body
+    return body
+
+
 def _hld_to_mermaid(plan: dict) -> str:
     """
     Generate a comprehensive Mermaid flowchart for High-Level Design (HLD).
@@ -1260,7 +1470,13 @@ def generator_node(state: AgentState):
     """
     plan = state["diagram_plan"]
     diagram_type = state.get("diagram_type") or "architecture"
-    logger.debug("Generating Mermaid for plan: %s, type: %s", plan, diagram_type)
+    logger.info(
+        "generator_node",
+        extra={
+            "diagram_type": diagram_type,
+            "plan_keys": list(plan.keys()) if isinstance(plan, dict) else [],
+        },
+    )
 
     explanation = None
     
@@ -1269,6 +1485,22 @@ def generator_node(state: AgentState):
         versions = _generate_hld_versions(plan)
         return {"json_output": {
             "mermaid": versions[0]["code"] if versions else "",
+            "nodes": [],
+            "edges": [],
+            "versions": versions,
+            "selectedVersion": 0,
+        }}
+
+    # Mind tree diagram - native Mermaid mindmap (radial/organic) + optional Tidy Tree layout
+    if diagram_type == "mindtree":
+        mermaid_code = _mindtree_to_mermaid(plan)
+        tidy_code = _mindtree_to_mermaid_tidy(plan)
+        versions = [
+            {"code": mermaid_code, "layout": "Mind Map", "direction": "radial", "description": "Radial mind map"},
+            {"code": tidy_code, "layout": "Tidy Tree", "direction": "TB", "description": "Hierarchical tree layout"},
+        ]
+        return {"json_output": {
+            "mermaid": mermaid_code,
             "nodes": [],
             "edges": [],
             "versions": versions,
@@ -1475,3 +1707,23 @@ def run_agent(prompt: str, diagram_type: str = "architecture", model: str | None
     inputs = {"prompt": prompt, "messages": [], "diagram_type": diagram_type, "model": model or ""}
     result = app.invoke(inputs)
     return result["json_output"]
+
+
+def run_plan_only(prompt: str, diagram_type: str = "architecture", model: str | None = None) -> dict:
+    """Run only the planner; returns diagram_plan for preview/confirmation. No new deps."""
+    state = {"prompt": prompt, "messages": [], "diagram_type": diagram_type, "model": model or ""}
+    out = planner_node(state)
+    return out["diagram_plan"]
+
+
+def run_generator_from_plan(diagram_plan: dict, diagram_type: str) -> dict:
+    """Generate diagram output from an existing plan (e.g. after user confirmation). No LLM call."""
+    state = {
+        "diagram_plan": diagram_plan,
+        "diagram_type": diagram_type,
+        "messages": [],
+        "prompt": "",
+        "model": "",
+    }
+    out = generator_node(state)
+    return out["json_output"]

@@ -4,10 +4,13 @@ ArchitectAI API — Production-ready FastAPI application.
 import logging
 import sys
 from contextlib import asynccontextmanager
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 
 from config import API_BASE_URL, CORS_ORIGINS, API_V1_PREFIX, ENVIRONMENT, FRONTEND_URL, LOG_LEVEL, MAX_PROMPT_LENGTH, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
@@ -38,6 +41,28 @@ app = FastAPI(
     redoc_url="/redoc" if ENVIRONMENT != "production" else None,
 )
 
+
+def _cors_headers(request: Request) -> dict:
+    """CORS headers for a response. Use in exception handlers so error responses are not blocked by browser."""
+    origin = request.headers.get("origin", "").strip()
+    allow_origin = origin if origin and origin in CORS_ORIGINS else (CORS_ORIGINS[0] if CORS_ORIGINS else "*")
+    return {
+        "Access-Control-Allow-Origin": allow_origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS, PUT, DELETE",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Session-Token",
+    }
+
+
+class EnsureCORSHeadersMiddleware(BaseHTTPMiddleware):
+    """Ensure CORS headers are on every response (including 500). Fixes browser CORS errors on failure."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for k, v in _cors_headers(request).items():
+            response.headers[k] = v
+        return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -45,6 +70,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Outermost: ensure CORS on every response (including 5xx) so browser never blocks
+app.add_middleware(EnsureCORSHeadersMiddleware)
+
+
+@app.exception_handler(RequestValidationError)
+def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return a single, readable message for 422 so clients can show it in the UI. Include CORS so browser does not block."""
+    errs = getattr(exc, "errors", ())
+    if callable(errs):
+        errs = errs()
+    if not isinstance(errs, (list, tuple)):
+        errs = []
+    if errs:
+        first = errs[0]
+        loc = first.get("loc", ())
+        msg = first.get("msg", "Invalid request")
+        field = loc[-1] if len(loc) > 1 else (loc[0] if loc else "body")
+        if "required" in str(msg).lower() or "missing" in str(first.get("type", "")).lower():
+            detail = f"Missing or invalid field: {field}. {msg}"
+        elif "enum" in str(first.get("type", "")).lower():
+            from diagram_types import DIAGRAM_TYPE_LABELS
+            allowed = ", ".join(DIAGRAM_TYPE_LABELS.keys())
+            detail = f"Invalid diagram_type. Use one of: {allowed}."
+        else:
+            detail = f"{field}: {msg}"
+    else:
+        detail = "Request validation failed. Check prompt (required, 1–2000 chars) and diagram_type."
+    logger.warning("validation_error", extra={"detail": detail, "errors": errs if isinstance(errs, (list, tuple)) else []})
+    resp = JSONResponse(status_code=422, content={"detail": detail})
+    for k, v in _cors_headers(request).items():
+        resp.headers[k] = v
+    return resp
+
+
+@app.exception_handler(Exception)
+def unhandled_exception_handler(request: Request, exc: Exception):
+    """Return JSON for exceptions. Add CORS headers so browser does not block on 5xx (exception handlers bypass middleware)."""
+    if isinstance(exc, HTTPException):
+        resp = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    else:
+        logger.exception("unhandled_exception")
+        resp = JSONResponse(
+            status_code=500,
+            content={"detail": "An unexpected error occurred. Please try again."},
+        )
+    for k, v in _cors_headers(request).items():
+        resp.headers[k] = v
+    return resp
 
 
 # --- Schemas ---
@@ -60,6 +133,11 @@ class GenerateFromRepoRequest(BaseModel):
     repo_url: str = Field(..., min_length=1, max_length=500, description="GitHub repository URL (e.g. https://github.com/owner/repo)")
     diagram_type: DiagramType = Field(default="architecture", description="Diagram type to generate")
     model: str | None = Field(default=None, description="OpenRouter model id")
+
+
+class GenerateFromPlanRequest(BaseModel):
+    diagram_plan: dict = Field(..., description="Plan from POST /api/v1/plan")
+    diagram_type: DiagramType = Field(..., description="Same diagram_type used for /plan")
 
 
 # --- Health ---
@@ -99,14 +177,32 @@ def list_models():
 
 @app.post(f"{API_V1_PREFIX}/generate")
 def generate_diagram(request: PromptRequest):
+    import time
     from agent import run_agent
     try:
-        logger.info("generate_request", extra={"prompt_length": len(request.prompt), "diagram_type": request.diagram_type, "model": request.model})
+        logger.info(
+            "generate_request",
+            extra={"prompt_length": len(request.prompt), "diagram_type": request.diagram_type, "model": request.model or "default"},
+        )
+        start = time.perf_counter()
         result = run_agent(request.prompt, request.diagram_type, request.model)
+        duration_ms = round((time.perf_counter() - start) * 1000)
+        logger.info(
+            "generate_success",
+            extra={
+                "diagram_type": request.diagram_type,
+                "duration_ms": duration_ms,
+                "has_mermaid": bool(result.get("mermaid")),
+                "versions_count": len(result.get("versions") or []),
+            },
+        )
         return result
     except Exception as e:
-        logger.exception("generate_error")
-        raise HTTPException(status_code=500, detail="Diagram generation failed. Please try again.")
+        logger.exception("generate_error", extra={"diagram_type": getattr(request, "diagram_type", None)})
+        detail = "Diagram generation failed. Please try again."
+        if ENVIRONMENT == "development":
+            detail = f"{detail} ({type(e).__name__}: {str(e)[:200]})"
+        raise HTTPException(status_code=500, detail=detail)
 
 
 # Legacy route for backward compatibility
@@ -115,9 +211,36 @@ def generate_diagram_legacy(request: PromptRequest):
     return generate_diagram(request)
 
 
+@app.post(f"{API_V1_PREFIX}/plan")
+def get_plan(request: PromptRequest):
+    """Return only the diagram plan (no diagram yet). Use for multi-step: show plan → user confirms → POST to /generate-from-plan."""
+    from agent import run_plan_only
+    try:
+        plan = run_plan_only(request.prompt, request.diagram_type, request.model)
+        return {"diagram_plan": plan, "diagram_type": request.diagram_type}
+    except Exception as e:
+        logger.exception("plan_error", extra={"diagram_type": request.diagram_type})
+        raise HTTPException(status_code=500, detail="Plan generation failed. Please try again.")
+
+
+@app.post(f"{API_V1_PREFIX}/generate-from-plan")
+def generate_diagram_from_plan(request: GenerateFromPlanRequest):
+    """Generate diagram from an existing plan (e.g. after user confirmed plan from /plan). No LLM call."""
+    from agent import run_generator_from_plan
+    from diagram_validator import get_valid_plan
+    try:
+        plan = get_valid_plan(request.diagram_type, request.diagram_plan)
+        result = run_generator_from_plan(plan, request.diagram_type)
+        return result
+    except Exception as e:
+        logger.exception("generate_from_plan_error", extra={"diagram_type": request.diagram_type})
+        raise HTTPException(status_code=500, detail="Diagram generation from plan failed. Please try again.")
+
+
 @app.post(f"{API_V1_PREFIX}/generate-from-repo")
 def generate_diagram_from_repo(request: GenerateFromRepoRequest):
     """Analyze a GitHub repo and generate the chosen diagram type from its structure and key files."""
+    import httpx
     from agent import run_agent
     from github_repo import analyze_repo
     try:
@@ -129,12 +252,35 @@ def generate_diagram_from_repo(request: GenerateFromRepoRequest):
         if len(summary) > MAX_PROMPT_LENGTH:
             summary = summary[:MAX_PROMPT_LENGTH] + "\n... (truncated)"
         result = run_agent(summary, request.diagram_type, request.model)
+        result["repo_url"] = request.repo_url.strip()
+        result["repo_explanation"] = summary
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
-        logger.exception("generate_from_repo_error")
-        raise HTTPException(status_code=500, detail="Repository analysis or diagram generation failed. Please try again.")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Repository not found or private.")
+        if e.response.status_code in (401, 403):
+            raise HTTPException(
+                status_code=502,
+                detail="GitHub access denied. Check GITHUB_TOKEN or repo visibility.",
+            )
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub API error: {e.response.status_code}. Try again later.",
+        )
+    except httpx.RequestError as e:
+        logger.warning("generate_from_repo_network_error: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach GitHub. Check the repo URL and try again.",
+        )
+    except Exception as e:
+        logger.exception("generate_from_repo_error: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Repository analysis or diagram generation failed. Please try again.",
+        )
 
 
 # --- GitHub Auth (optional) ---

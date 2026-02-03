@@ -38,6 +38,9 @@ export interface DiagramDownloadMenuProps {
   onPrepareExport: (exportFn: () => Promise<void>) => void;
   disabled?: boolean;
   className?: string;
+  /** When set, menu open state is controlled by parent (e.g. for keyboard shortcut). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function DiagramDownloadMenu({
@@ -49,9 +52,14 @@ export function DiagramDownloadMenu({
   onPrepareExport,
   disabled,
   className,
+  open: controlledOpen,
+  onOpenChange: controlledSetOpen,
 }: DiagramDownloadMenuProps) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const isControlled = controlledOpen !== undefined && controlledSetOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = isControlled ? controlledSetOpen : setInternalOpen;
 
   const runExport = useCallback(
     async (exportFn: () => Promise<void>) => {
@@ -87,10 +95,8 @@ export function DiagramDownloadMenu({
         backgroundColor: "#020617",
         skipFonts: true, // Skip external fonts to avoid CORS issues
         filter: (node) => {
-          // Skip external stylesheets that cause CORS issues
-          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) {
-            return false;
-          }
+          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) return false;
+          if (node instanceof HTMLElement && node.closest?.('[data-diagram-download-hide]')) return false;
           return true;
         },
       });
@@ -115,9 +121,8 @@ export function DiagramDownloadMenu({
         backgroundColor: "#020617",
         skipFonts: true,
         filter: (node) => {
-          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) {
-            return false;
-          }
+          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) return false;
+          if (node instanceof HTMLElement && node.closest?.('[data-diagram-download-hide]')) return false;
           return true;
         },
       });
@@ -144,9 +149,8 @@ export function DiagramDownloadMenu({
         backgroundColor: "#020617",
         skipFonts: true,
         filter: (node) => {
-          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) {
-            return false;
-          }
+          if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) return false;
+          if (node instanceof HTMLElement && node.closest?.('[data-diagram-download-hide]')) return false;
           return true;
         },
       });

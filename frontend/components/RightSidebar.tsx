@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Github, Cpu, ChevronRight, ChevronDown, PanelRightClose } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GitHubReposPanel } from "./GitHubReposPanel";
@@ -25,12 +25,24 @@ export function RightSidebar({
   const [modelExpanded, setModelExpanded] = useState(false);
 
   const nodeCount = modelResponse?.nodes?.length ?? 0;
+  const hasRepoExplanation = Boolean(modelResponse?.repo_explanation);
+  const didAutoExpandRef = useRef(false);
+
+  // Auto-expand Model Response when repo explanation first appears so "About this repository" is visible
+  useEffect(() => {
+    if (hasRepoExplanation && !didAutoExpandRef.current) {
+      didAutoExpandRef.current = true;
+      setModelExpanded(true);
+      setGithubExpanded(false);
+    }
+    if (!hasRepoExplanation) didAutoExpandRef.current = false;
+  }, [hasRepoExplanation]);
 
   return (
     <div
       className={cn(
         "shrink-0 border-l border-[var(--border)] bg-[var(--card)] transition-[width] duration-200 ease-out flex flex-col",
-        isOpen ? "w-80" : "w-0"
+        isOpen ? "w-80 max-w-[min(20rem,100vw)]" : "w-0"
       )}
       style={{ overflow: "hidden" }}
     >
@@ -40,8 +52,9 @@ export function RightSidebar({
         <button
           type="button"
           onClick={onClose}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           title="Close sidebar"
+          aria-label="Close right panels"
         >
           <PanelRightClose className="h-4 w-4" />
         </button>
@@ -84,7 +97,13 @@ export function RightSidebar({
               icon={<Cpu className="h-4 w-4" />}
               isExpanded={modelExpanded}
               onToggle={() => setModelExpanded(false)}
-              badge={nodeCount > 0 ? `${nodeCount} nodes` : undefined}
+              badge={
+                hasRepoExplanation
+                  ? "Repository"
+                  : nodeCount > 0
+                    ? `${nodeCount} nodes`
+                    : undefined
+              }
             />
             <div className="flex-1 overflow-y-auto min-h-0">
               <ModelResponseInline response={modelResponse} />
@@ -103,7 +122,7 @@ export function RightSidebar({
                 setModelExpanded(true);
                 setGithubExpanded(false);
               }}
-              badge={nodeCount > 0 ? `${nodeCount}` : undefined}
+              badge={hasRepoExplanation ? "Repository" : nodeCount > 0 ? `${nodeCount}` : undefined}
             />
           )}
           {!githubExpanded && (
@@ -190,10 +209,30 @@ function ModelResponseInline({ response }: { response: ModelResponse | null }) {
     );
   }
 
-  const { nodes = [], edges = [], explanation } = response;
+  const { nodes = [], edges = [], explanation, repo_url, repo_explanation } = response;
 
   return (
     <div className="p-3 space-y-3">
+      {repo_explanation && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
+          <p className="text-xs font-semibold text-[var(--primary)] mb-1.5">About this repository</p>
+          {repo_url && (
+            <a
+              href={repo_url.startsWith("http") ? repo_url : `https://github.com/${repo_url}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-[var(--primary)] hover:underline block mb-2 truncate"
+            >
+              {repo_url.replace(/^https?:\/\//, "")}
+            </a>
+          )}
+          <div className="max-h-[280px] overflow-y-auto rounded bg-[var(--secondary)] p-2.5">
+            <pre className="text-[11px] text-[var(--foreground)] leading-relaxed whitespace-pre-wrap font-sans">
+              {repo_explanation}
+            </pre>
+          </div>
+        </div>
+      )}
       {explanation && (
         <div className="rounded-lg bg-[var(--secondary)] p-3">
           <p className="text-xs font-medium text-[var(--primary)] mb-1">Explanation</p>
@@ -274,12 +313,14 @@ export function RightSidebarToggle({ onClick, isOpen }: RightSidebarToggleProps)
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition",
+        "flex min-h-[44px] items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition",
         isOpen
           ? "border-[var(--primary)] bg-[var(--primary)]/20 text-[var(--primary)]"
           : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--secondary)]"
       )}
-      title={isOpen ? "Hide panels" : "Show panels"}
+      title={isOpen ? "Hide panels (Ctrl+2)" : "Show panels (Ctrl+2)"}
+      aria-label={isOpen ? "Hide right panels" : "Show right panels (GitHub, model response)"}
+      aria-expanded={isOpen}
     >
       <PanelRightClose className={cn("h-4 w-4", !isOpen && "rotate-180")} />
       <span className="hidden sm:inline">Panels</span>

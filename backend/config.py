@@ -17,12 +17,16 @@ def _split_origins(value: str) -> List[str]:
     return [o.strip() for o in value.split(",") if o.strip()]
 
 # CORS: allow multiple origins in production (e.g. https://app.example.com, https://www.example.com)
+# With allow_credentials=True, browser rejects "*"; use explicit origins in dev.
 _cors_env = os.getenv("CORS_ORIGINS", "").strip()
 if _cors_env:
     CORS_ORIGINS: List[str] = _split_origins(_cors_env)
 else:
-    # In development, allow all origins (set CORS_ORIGINS in production)
-    CORS_ORIGINS: List[str] = ["*"]
+    # Development: explicit localhost so credentials (cookies, X-Session-Token) work
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
 # API
 API_V1_PREFIX = "/api/v1"

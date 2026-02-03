@@ -16,6 +16,14 @@ export function getGenerateFromRepoUrl(): string {
   return `${getApiBaseUrl()}/api/v1/generate-from-repo`;
 }
 
+export function getPlanUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/plan`;
+}
+
+export function getGenerateFromPlanUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/generate-from-plan`;
+}
+
 export function getHealthUrl(): string {
   return `${getApiBaseUrl()}/health`;
 }
@@ -77,6 +85,7 @@ export const DEFAULT_MODELS: ModelOption[] = [
 export type DiagramType =
   | "architecture"
   | "hld"
+  | "mindtree"
   | "class"
   | "sequence"
   | "usecase"
@@ -85,9 +94,30 @@ export type DiagramType =
   | "component"
   | "deployment";
 
+/** All diagram types accepted by the API. Use when sending diagram_type to avoid 422. */
+export const VALID_DIAGRAM_TYPES: readonly DiagramType[] = [
+  "architecture",
+  "hld",
+  "mindtree",
+  "class",
+  "sequence",
+  "usecase",
+  "activity",
+  "state",
+  "component",
+  "deployment",
+] as const;
+
+export function toValidDiagramType(value: string): DiagramType {
+  return (VALID_DIAGRAM_TYPES as readonly string[]).includes(value)
+    ? (value as DiagramType)
+    : "architecture";
+}
+
 export const DIAGRAM_TYPE_LABELS: Record<DiagramType, string> = {
   architecture: "Architecture",
   hld: "HLD (High-Level Design)",
+  mindtree: "Mind Tree / Mind Map",
   class: "Class",
   sequence: "Sequence",
   usecase: "Use Case",

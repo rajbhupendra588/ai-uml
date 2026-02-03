@@ -8,6 +8,112 @@ GoDaddy sells domains and hosting. For this stack, the best approach is to **use
 
 ---
 
+## For domain: servicesasai.com (copy-paste values)
+
+| What | URL |
+|------|-----|
+| **App (frontend)** | `https://servicesasai.com` or `https://www.servicesasai.com` |
+| **API (backend)** | `https://api.servicesasai.com` |
+
+### Vercel (frontend) — Environment Variable
+
+```
+NEXT_PUBLIC_API_URL=https://api.servicesasai.com
+```
+
+### Backend (Railway/Render) — Environment Variables
+
+```
+ENVIRONMENT=production
+CORS_ORIGINS=https://servicesasai.com,https://www.servicesasai.com
+FRONTEND_URL=https://servicesasai.com
+API_BASE_URL=https://api.servicesasai.com
+OPENROUTER_API_KEY=sk-or-v1-...
+SECRET_KEY=<generate-a-secure-random-string>
+```
+
+### GoDaddy DNS (after deploying frontend + backend)
+
+| Type | Name | Value |
+|------|------|--------|
+| **A** | `@` | 76.76.21.21 *(Vercel — or use Vercel’s CNAME)* |
+| **CNAME** | `www` | `cname.vercel-dns.com` |
+| **CNAME** | `api` | `your-backend.up.railway.app` *(replace with your Railway/Render URL)* |
+
+Then in **Vercel** → Project → Settings → Domains, add `servicesasai.com` and `www.servicesasai.com`.
+
+---
+
+## Deploy backend on Render (step-by-step)
+
+### 1. Push your code
+
+Make sure your repo (with the `backend` folder and `render.yaml`) is on GitHub.
+
+### 2. Create a Render account
+
+Go to [render.com](https://render.com) and sign up (GitHub login is easiest).
+
+### 3. New Web Service from repo
+
+1. **Dashboard** → **New** → **Web Service**
+2. Connect your **GitHub** account if needed, then select the repo that contains this project
+3. Configure:
+   - **Name:** `ai-uml-api` (or any name)
+   - **Region:** Oregon (or nearest to you)
+   - **Root Directory:** `backend`
+   - **Runtime:** `Python 3`
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+
+### 4. Environment variables
+
+In the same screen, open **Environment** and add:
+
+| Key | Value |
+|-----|--------|
+| `ENVIRONMENT` | `production` |
+| `CORS_ORIGINS` | `https://servicesasai.com,https://www.servicesasai.com` |
+| `FRONTEND_URL` | `https://servicesasai.com` |
+| `API_BASE_URL` | `https://api.servicesasai.com` *(or your Render URL until you add custom domain)* |
+| `OPENROUTER_API_KEY` | `sk-or-v1-...` *(your key)* |
+| `SECRET_KEY` | *(generate a long random string)* |
+
+Optional: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` if you use GitHub login.
+
+### 5. Deploy
+
+Click **Create Web Service**. Render will build and deploy. When done, you get a URL like:
+
+`https://ai-uml-api.onrender.com`
+
+### 6. (Optional) Custom domain api.servicesasai.com
+
+1. In Render: your service → **Settings** → **Custom Domains** → **Add Custom Domain**
+2. Enter: `api.servicesasai.com`
+3. Render shows a **CNAME target** (e.g. `ai-uml-api.onrender.com` or `something.onrender.com`)
+4. In **GoDaddy** → **DNS** for `servicesasai.com`, add:
+   - **Type:** CNAME  
+   - **Name:** `api`  
+   - **Value:** the CNAME target from Render  
+   - **TTL:** 600
+
+After DNS propagates, your API will be at `https://api.servicesasai.com`.
+
+### 7. Use this URL in Vercel
+
+In your **Vercel** frontend project, set:
+
+`NEXT_PUBLIC_API_URL=https://api.servicesasai.com`
+
+(or `https://ai-uml-api.onrender.com` until the custom domain works).
+
+---
+
+**Note:** On the free tier, Render spins down the service after ~15 minutes of no traffic. The first request after that may take 30–60 seconds to wake up. Paid plans keep it always on.
+
+---
+
 ## Option 1: Recommended — Domain on GoDaddy, App Hosted Elsewhere
 
 ### Step 1: Host the application

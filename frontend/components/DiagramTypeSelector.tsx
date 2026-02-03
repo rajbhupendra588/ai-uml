@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import type { DiagramType } from "@/lib/api";
-import { DIAGRAM_TYPE_LABELS } from "@/lib/api";
+import { DIAGRAM_TYPE_LABELS, VALID_DIAGRAM_TYPES } from "@/lib/api";
 
 interface DiagramTypeSelectorProps {
   value: DiagramType;
@@ -10,18 +10,6 @@ interface DiagramTypeSelectorProps {
   disabled?: boolean;
   className?: string;
 }
-
-const TYPES: DiagramType[] = [
-  "architecture",
-  "hld",
-  "class",
-  "sequence",
-  "usecase",
-  "activity",
-  "state",
-  "component",
-  "deployment",
-];
 
 export function DiagramTypeSelector({
   value,
@@ -43,7 +31,7 @@ export function DiagramTypeSelector({
       )}
       aria-label="Diagram type"
     >
-      {TYPES.map((type) => (
+      {VALID_DIAGRAM_TYPES.map((type) => (
         <option key={type} value={type}>
           {DIAGRAM_TYPE_LABELS[type]}
         </option>

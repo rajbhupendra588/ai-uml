@@ -170,6 +170,28 @@ body {
   stroke-width: 1;
 }
 
+/* Diagram fit: keep Mermaid SVG within viewport */
+.mermaid-diagram-fit svg {
+  flex-shrink: 1;
+}
+
+/* Mind map: softer, more organic look (curved feel, rounded strokes) */
+.mermaid-mindmap-container .mermaid-mindmap-svg path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.mermaid-mindmap-container .mermaid-mindmap-svg rect {
+  rx: 12;
+  ry: 12;
+}
+.mermaid-mindmap-container .mermaid-mindmap-svg ellipse {
+  stroke-width: 1.5;
+}
+.mermaid-mindmap-container .mermaid-mindmap-svg text {
+  font-weight: 500;
+}
+
 /* Mermaid-style animated edges */
 @keyframes edge-flow {
   from {

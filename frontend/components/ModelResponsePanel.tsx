@@ -8,6 +8,10 @@ export interface ModelResponse {
   nodes: Array<{ id: string; type?: string; data?: { label?: string; subLabel?: string } }>;
   edges: Array<{ id: string; source: string; target: string; label?: React.ReactNode; data?: { label?: string } }>;
   explanation?: string;
+  /** Set when diagram was generated from a repo; URL of the repository. */
+  repo_url?: string;
+  /** Set when diagram was generated from a repo; detailed analysis used for generation. */
+  repo_explanation?: string;
 }
 
 interface ModelResponsePanelProps {
@@ -87,6 +91,28 @@ export function ModelResponsePanel({ response, className }: ModelResponsePanelPr
               <p className="text-[var(--muted)]">Generate a diagram to see the model response here.</p>
             ) : (
               <div className="space-y-4">
+                {response.repo_explanation && (
+                  <section>
+                    <div className="flex items-center gap-1.5 text-[var(--primary)]">
+                      <span className="text-xs font-semibold uppercase tracking-wider">About this repository</span>
+                    </div>
+                    {response.repo_url && (
+                      <a
+                        href={response.repo_url.startsWith("http") ? response.repo_url : `https://github.com/${response.repo_url}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 block text-xs text-[var(--primary)] hover:underline truncate"
+                      >
+                        {response.repo_url.replace(/^https?:\/\//, "")}
+                      </a>
+                    )}
+                    <div className="mt-1.5 max-h-48 overflow-y-auto rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
+                      <pre className="text-xs text-[var(--foreground)] leading-relaxed whitespace-pre-wrap font-sans">
+                        {response.repo_explanation}
+                      </pre>
+                    </div>
+                  </section>
+                )}
                 {response.explanation && (
                   <section>
                     <div className="flex items-center gap-1.5 text-[var(--primary)]">
