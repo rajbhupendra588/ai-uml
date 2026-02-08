@@ -34,7 +34,7 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Validation
-MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "2000"))
+MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "16000"))
 # Repo analysis needs more context; default 25k chars
 REPO_ANALYSIS_MAX_LENGTH = int(os.getenv("REPO_ANALYSIS_MAX_LENGTH", "25000"))
 

@@ -89,6 +89,7 @@ export const DEFAULT_MODELS: ModelOption[] = [
 export type DiagramType =
   | "architecture"
   | "hld"
+  | "lld"
   | "mindtree"
   | "class"
   | "sequence"
@@ -102,6 +103,7 @@ export type DiagramType =
 export const VALID_DIAGRAM_TYPES: readonly DiagramType[] = [
   "architecture",
   "hld",
+  "lld",
   "mindtree",
   "class",
   "sequence",
@@ -121,6 +123,7 @@ export function toValidDiagramType(value: string): DiagramType {
 export const DIAGRAM_TYPE_LABELS: Record<DiagramType, string> = {
   architecture: "Architecture",
   hld: "HLD (High-Level Design)",
+  lld: "LLD (Low-Level Design)",
   mindtree: "Mind Tree / Mind Map",
   class: "Class",
   sequence: "Sequence",

@@ -46,11 +46,26 @@ SOURCE_PATTERNS = [
     "cmd/main.go", "internal/main.go", "main.go",
 ]
 
+# Monorepo: top-level dirs that typically contain multiple projects
+MONOREPO_CONTAINERS = ["apps", "app", "packages", "pkg", "projects", "services", "examples", "tools"]
 
-def parse_github_url(url: str) -> tuple[str, str, str] | None:
+# Monorepo workspace config files (root)
+MONOREPO_CONFIG_FILES = [
+    "pnpm-workspace.yaml", "pnpm-workspace.yml",
+    "lerna.json", "turbo.json", "nx.json", "workspace.json",
+    "rush.json", "bolt.json",
+]
+
+
+def parse_github_url(url: str) -> tuple[str, str, str, str | None] | None:
     """
-    Parse a GitHub repo URL into (owner, repo, ref).
-    ref defaults to main; supports github.com/owner/repo, /tree/branch, .git.
+    Parse a GitHub repo URL into (owner, repo, ref, sub_path).
+    ref defaults to main. sub_path is the directory path when a sub-project URL is used.
+    Supports:
+      - github.com/owner/repo
+      - github.com/owner/repo/tree/branch
+      - github.com/owner/repo/tree/branch/apps/web  (sub_path=apps/web)
+      - github.com/owner/repo/blob/branch/apps/web/file.ts  (sub_path=apps/web)
     Returns None if not a valid GitHub repo URL.
     """
     url = (url or "").strip()
@@ -58,7 +73,6 @@ def parse_github_url(url: str) -> tuple[str, str, str] | None:
         return None
     # Normalize: remove trailing slash, .git
     url = url.rstrip("/").removesuffix(".git")
-    # github.com/owner/repo or github.com/owner/repo/tree/branch
     parsed = urlparse(url if "://" in url else "https://" + url)
     host = (parsed.netloc or "").lower()
     if "github.com" not in host:
@@ -69,9 +83,16 @@ def parse_github_url(url: str) -> tuple[str, str, str] | None:
         return None
     owner, repo = parts[0], parts[1]
     ref = "main"
+    sub_path: str | None = None
     if len(parts) >= 4 and parts[2] == "tree":
         ref = parts[3]
-    return (owner, repo, ref)
+        if len(parts) > 4:
+            sub_path = "/".join(parts[4:])
+    elif len(parts) >= 4 and parts[2] == "blob":
+        ref = parts[3]
+        if len(parts) > 4:
+            sub_path = "/".join(parts[4:-1])  # parent dir of file
+    return (owner, repo, ref, sub_path)
 
 
 def _headers() -> dict[str, str]:
@@ -131,7 +152,92 @@ def fetch_file_content(
     return r.text
 
 
-def _gather_file_tree_summary(tree: list[dict]) -> str:
+# Max projects to list for monorepo (avoids huge prompts; apps/packages prioritized)
+MAX_MONOREPO_PROJECTS = 25
+
+# Priority order: apps/packages first, examples last
+MONOREPO_PRIORITY = {"apps": 0, "app": 0, "packages": 1, "pkg": 1, "services": 2, "projects": 2, "tools": 3, "examples": 4}
+
+
+def _detect_monorepo_projects(tree: list[dict]) -> tuple[list[str], int]:
+    """
+    Detect monorepo structure: apps/*, packages/*, projects/*, etc.
+    Returns (project_paths, total_count). Paths capped at MAX_MONOREPO_PROJECTS;
+    apps/packages prioritized. total_count is the full count before cap.
+    """
+    top_dirs: set[str] = set()
+    for entry in tree:
+        path = (entry.get("path") or "").strip()
+        if not path or path.startswith(".") or "/" not in path:
+            continue
+        top = path.split("/")[0].lower()
+        if top in (c.lower() for c in MONOREPO_CONTAINERS):
+            top_dirs.add(path.split("/")[0])
+    if not top_dirs:
+        return [], 0
+    all_projects: list[str] = []
+    for entry in tree:
+        path = (entry.get("path") or "").strip()
+        if not path or path.startswith("."):
+            continue
+        parts = path.split("/")
+        if len(parts) < 2:
+            continue
+        top = parts[0]
+        if top not in top_dirs:
+            continue
+        sub = parts[1]
+        if sub.startswith(".") or sub.endswith(".json"):  # skip config files, not project dirs
+            continue
+        project_path = f"{parts[0]}/{parts[1]}"
+        if project_path not in all_projects:
+            all_projects.append(project_path)
+    # Sort: apps first, then packages, then others; then by name
+    def sort_key(p: str) -> tuple[int, str]:
+        top = p.split("/")[0].lower()
+        return (MONOREPO_PRIORITY.get(top, 5), p)
+
+    sorted_projects = sorted(set(all_projects), key=sort_key)
+    total = len(sorted_projects)
+    if total > MAX_MONOREPO_PROJECTS:
+        # Keep apps + packages fully; truncate examples/others
+        kept = [p for p in sorted_projects if p.split("/")[0].lower() in ("apps", "app", "packages", "pkg")]
+        others = [p for p in sorted_projects if p not in kept]
+        remaining = MAX_MONOREPO_PROJECTS - len(kept)
+        if remaining > 0 and others:
+            kept.extend(others[:remaining])
+        return kept, total
+    return sorted_projects, total
+
+
+def _gather_monorepo_file_priorities(
+    projects: list[str],
+    path_lookup: dict[str, str],
+) -> list[str]:
+    """
+    For monorepo: prioritize one package.json/Gemfile/etc per project.
+    Returns paths to fetch, ensuring each project is represented.
+    """
+    per_project: dict[str, str] = {}
+    key_patterns = ["package.json", "gemfile", "pyproject.toml", "cargo.toml", "go.mod", "pom.xml"]
+    for proj in projects:
+        proj_lower = proj.lower() + "/"
+        for tree_key, orig in path_lookup.items():
+            if not tree_key.startswith(proj_lower):
+                continue
+            rel = tree_key[len(proj_lower) :]
+            if "/" in rel:
+                continue
+            for kp in key_patterns:
+                if tree_key.endswith("/" + kp) or tree_key == kp:
+                    per_project[proj] = orig
+                    break
+            if proj in per_project:
+                break
+    return list(per_project.values())
+
+
+def _gather_file_tree_summary(tree: list[dict], projects: list[str] | None = None) -> str:
     """Build a structure summary: directories with file counts and key paths."""
     dir_files: dict[str, list[str]] = {}
     root_files: list[str] = []
@@ -148,6 +254,9 @@ def _gather_file_tree_summary(tree: list[dict]) -> str:
                 dir_files[top] = []
             dir_files[top].append(path)
     lines = []
+    if projects:
+        lines.append("MONOREPO - Projects: " + ", ".join(projects))
+        lines.append("")
     if root_files:
         lines.append("Root files: " + ", ".join(sorted(root_files)[:40]))
     for top in sorted(dir_files.keys())[:20]:
@@ -158,21 +267,39 @@ def _gather_file_tree_summary(tree: list[dict]) -> str:
     return "\n".join(lines) if lines else ""
 
 
-def build_repo_summary(owner: str, repo: str, ref: str, repo_info: dict, tree: list[dict], file_contents: dict[str, str]) -> str:
+def build_repo_summary(
+    owner: str,
+    repo: str,
+    ref: str,
+    repo_info: dict,
+    tree: list[dict],
+    file_contents: dict[str, str],
+    projects: list[str] | None = None,
+    total_projects: int | None = None,
+    sub_path: str | None = None,
+) -> str:
     """Build a detailed text summary for deep repo analysis and diagram generation."""
     lines = []
     name = repo_info.get("name") or repo
     desc = (repo_info.get("description") or "").strip()
     lang = (repo_info.get("language") or "").strip()
     lines.append(f"Repository: {owner}/{repo} (ref: {ref})")
+    if sub_path:
+        lines.append(f"Sub-project: {sub_path} (analyzing this path only)")
     lines.append(f"Name: {name}")
     if desc:
         lines.append(f"Description: {desc}")
     if lang:
         lines.append(f"Primary language: {lang}")
+    if projects:
+        lines.append("")
+        proj_line = "MONOREPO - Include ALL projects in the diagram: " + ", ".join(projects)
+        if total_projects and total_projects > len(projects):
+            proj_line += f" (+{total_projects - len(projects)} more)"
+        lines.append(proj_line)
 
     # Full directory structure summary
-    tree_summary = _gather_file_tree_summary(tree)
+    tree_summary = _gather_file_tree_summary(tree, projects)
     if tree_summary:
         lines.append("")
         lines.append("Repository structure:")
@@ -202,7 +329,7 @@ def analyze_repo(repo_url: str) -> str:
     if not parsed:
         raise ValueError("Invalid GitHub repository URL. Use format: https://github.com/owner/repo")
 
-    owner, repo, ref = parsed
+    owner, repo, ref, sub_path = parsed
     if owner.lower() == "owner" and repo.lower() == "repo":
         raise ValueError(
             "That’s the placeholder URL. Paste a real GitHub repo, e.g. https://github.com/vercel/next.js"
@@ -222,6 +349,16 @@ def analyze_repo(repo_url: str) -> str:
         if tree is None:
             tree = []
 
+        # Filter to sub-project only when sub_path is provided (direct sub-project URL)
+        if sub_path:
+            sub_prefix = sub_path.rstrip("/") + "/"
+            tree = [
+                e for e in tree
+                if (e.get("path") or "").startswith(sub_prefix) or (e.get("path") or "").rstrip("/") == sub_path.rstrip("/")
+            ]
+            if not tree:
+                raise ValueError(f"Sub-project path '{sub_path}' not found or empty. Check the URL.")
+
         # Build path lookup: lowercase -> original path
         path_lookup: dict[str, str] = {}
         for e in tree:
@@ -229,9 +366,35 @@ def analyze_repo(repo_url: str) -> str:
             if p:
                 path_lookup[p.lower()] = p
 
-        # 1. Key config/docs files
+        # Detect monorepo only when analyzing full repo (no sub_path)
+        projects: list[str] = []
+        total_projects: int | None = None
+        if not sub_path:
+            projects, total_projects = _detect_monorepo_projects(tree)
+        is_monorepo = len(projects) > 0
+        file_limit = 50 if is_monorepo else 30
+
+        # 0. Monorepo: prioritize one config per project + workspace configs
         to_fetch: list[str] = []
         seen_lower: set[str] = set()
+
+        if is_monorepo:
+            for cfg in MONOREPO_CONFIG_FILES:
+                cfg_lower = cfg.lower()
+                for tree_key, orig in path_lookup.items():
+                    if tree_key == cfg_lower or tree_key.endswith("/" + cfg_lower):
+                        if tree_key not in seen_lower:
+                            seen_lower.add(tree_key)
+                            to_fetch.append(orig)
+                        break
+            monorepo_priorities = _gather_monorepo_file_priorities(projects, path_lookup)
+            for p in monorepo_priorities:
+                pl = p.lower()
+                if pl not in seen_lower:
+                    seen_lower.add(pl)
+                    to_fetch.append(p)
+
+        # 1. Key config/docs files
         for entry in tree:
             path = (entry.get("path") or "").strip()
             if not path:
@@ -255,12 +418,16 @@ def analyze_repo(repo_url: str) -> str:
                     break
 
         file_contents: dict[str, str] = {}
-        for path in to_fetch[:30]:  # deeper analysis: more files
+        for path in to_fetch[:file_limit]:
             if not path:
                 continue
             content = fetch_file_content(client, owner, repo, path, ref)
             if content:
                 file_contents[path] = content
 
-        summary = build_repo_summary(owner, repo, ref, repo_info, tree, file_contents)
+        summary = build_repo_summary(
+            owner, repo, ref, repo_info, tree, file_contents, projects,
+            total_projects if is_monorepo else None,
+            sub_path,
+        )
         return summary

@@ -63,6 +63,7 @@ export function GitHubReposPanel({
   const [githubInput, setGithubInput] = useState("");
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [recentUsernames, setRecentUsernames] = useState<string[]>([]);
+  const [pasteUrl, setPasteUrl] = useState("");
 
   // Extract username from GitHub URL or use as-is
   // Load persisted repos and recent usernames on mount
@@ -220,6 +221,36 @@ export function GitHubReposPanel({
             ) : (
               <ArrowRight className="h-4 w-4" />
             )}
+          </button>
+        </div>
+        <div className="mt-2 flex gap-1.5 items-center">
+          <input
+            type="text"
+            value={pasteUrl}
+            onChange={(e) => setPasteUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && pasteUrl.trim() && /github\.com/i.test(pasteUrl)) {
+                e.preventDefault();
+                onSelectRepo(pasteUrl.trim());
+                setPasteUrl("");
+              }
+            }}
+            placeholder="Or paste repo/sub-project URL"
+            className="flex-1 min-w-0 rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--primary)]"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const url = pasteUrl.trim();
+              if (url && /github\.com/i.test(url)) {
+                onSelectRepo(url);
+                setPasteUrl("");
+              }
+            }}
+            disabled={!pasteUrl.trim() || isLoading}
+            className="shrink-0 rounded px-2 py-1 text-xs bg-[var(--primary)] text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Go
           </button>
         </div>
         {recentUsernames.length > 0 && (

@@ -3,10 +3,11 @@ UML diagram type definitions and routing.
 """
 from typing import Literal
 
-# All supported diagram types (architecture + UML + HLD + mind tree)
+# All supported diagram types (architecture + UML + HLD + LLD + mind tree)
 DiagramType = Literal[
     "architecture",
     "hld",
+    "lld",
     "mindtree",
     "class",
     "sequence",
@@ -20,6 +21,7 @@ DiagramType = Literal[
 DIAGRAM_TYPE_LABELS: dict[str, str] = {
     "architecture": "Architecture / Component",
     "hld": "High-Level Design (HLD)",
+    "lld": "Low-Level Design (LLD)",
     "mindtree": "Mind Tree / Mind Map",
     "class": "Class Diagram",
     "sequence": "Sequence Diagram",

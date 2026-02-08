@@ -6,6 +6,7 @@
 export type DiagramType =
   | "architecture"
   | "hld"
+  | "lld"
   | "mindtree"
   | "class"
   | "sequence"

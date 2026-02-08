@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { ContextMessage } from "./ContextPanel";
 import { GitHubReposPanel } from "./GitHubReposPanel";
+import { HldComponentsPanel } from "./HldComponentsPanel";
 
 // Re-export ContextMessage so Canvas can import from here
 export type { ContextMessage };
@@ -68,6 +69,10 @@ export interface SideKickProps {
   onSelectRepo?: (repoUrl: string) => void;
   /** When this increments (e.g. on New diagram), GitHub panel clears its cached repos. */
   newDiagramCount?: number;
+  /* HLD drill-down to LLD */
+  diagramPlan?: Record<string, unknown> | null;
+  diagramType?: string;
+  onGenerateLld?: (componentName: string) => void;
 }
 
 type SideKickTab = "chat" | "github";
@@ -88,6 +93,9 @@ export function SideKick({
   planSummary,
   onSelectRepo,
   newDiagramCount = 0,
+  diagramPlan = null,
+  diagramType = "architecture",
+  onGenerateLld,
 }: SideKickProps) {
   const [input, setInput] = useState("");
   const [activeTab, setActiveTab] = useState<SideKickTab>("chat");
@@ -302,6 +310,16 @@ export function SideKick({
 
       {/* ---- Chat tab: Messages / Welcome ---- */}
       <div className={cn("flex-1 overflow-y-auto p-4 space-y-3", activeTab !== "chat" && "hidden")}>
+        {diagramType === "hld" && diagramPlan?.layers && onGenerateLld && (
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] overflow-hidden">
+            <HldComponentsPanel
+              diagramPlan={diagramPlan}
+              diagramType={diagramType}
+              onGenerateLld={onGenerateLld}
+              isLoading={isLoading}
+            />
+          </div>
+        )}
         {!hasMessages && !pendingPlan ? (
           /* ---- Welcome empty state ---- */
           <div className="flex h-full flex-col items-center justify-center text-center px-2">

@@ -96,7 +96,7 @@ def validation_exception_handler(request: Request, exc: RequestValidationError):
         else:
             detail = f"{field}: {msg}"
     else:
-        detail = "Request validation failed. Check prompt (required, 1–2000 chars) and diagram_type."
+        detail = f"Request validation failed. Check prompt (required, 1–{MAX_PROMPT_LENGTH} chars) and diagram_type."
     logger.warning("validation_error", extra={"detail": detail, "errors": errs if isinstance(errs, (list, tuple)) else []})
     resp = JSONResponse(status_code=422, content={"detail": detail})
     for k, v in _cors_headers(request).items():
@@ -305,9 +305,14 @@ def generate_diagram_from_repo(request: GenerateFromRepoRequest):
             "CRITICAL - Repository analysis mode: Extract ONLY components that are explicitly "
             "mentioned or clearly evident in the codebase below. Do NOT invent or assume cloud "
             "components (AWS, GCP, Stripe, SendGrid, SQS, Redis, etc.) unless they appear in the "
-            "files. If the repo is a simple app (e.g. Ruby on Rails, Heroku), show only what exists.\n\n"
-            + raw_summary
+            "files. If the repo is a simple app (e.g. Ruby on Rails, Heroku), show only what exists."
         )
+        if "MONOREPO" in raw_summary:
+            repo_prompt += (
+                " MONOREPO: This repo has multiple projects (apps, packages). Include ALL projects "
+                "in the diagram—each app and shared package. Do not merge or omit projects."
+            )
+        repo_prompt += "\n\n" + raw_summary
         result = run_agent(repo_prompt, request.diagram_type, request.model)
         result["repo_url"] = request.repo_url.strip()
         result["repo_explanation"] = repo_explanation

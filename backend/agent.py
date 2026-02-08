@@ -248,6 +248,11 @@ def _plan_hld(prompt: str, llm_to_use, context_str: str) -> dict:
             "Stripe, SendGrid, SQS, Redis, etc. unless they appear in the files. A simple Ruby/Node "
             "app with Heroku = just Web app + Database + Heroku."
         )
+        if "monorepo" in prompt.lower():
+            repo_instruction += (
+                " MONOREPO: Include ALL projects (apps/*, packages/*). Each app and shared package "
+                "must appear as a component. Do not merge or omit any project."
+            )
     system_prompt = f"""You are a Senior Solutions Architect creating a detailed High-Level Design (HLD). Analyze the user's request and create a comprehensive system design.
 
 BEST PRACTICES / CONTEXT:
@@ -307,6 +312,94 @@ Required structure:
             "flows": []
         }
 
+    return plan
+
+
+def _plan_lld(prompt: str, llm_to_use, context_str: str) -> dict:
+    """Plan a detailed Low-Level Design (module internals: classes, interfaces, dependencies)."""
+    if not has_llm:
+        # Mock LLD for testing
+        logger.debug("Mock LLD: generating simulated plan")
+        p = prompt.lower()
+        modules = []
+        if any(w in p for w in ["order", "cart", "ecommerce"]):
+            modules = [
+                {
+                    "name": "OrderService",
+                    "classes": [
+                        {"name": "Order", "attributes": ["id: string", "total: number"], "methods": ["calculateTotal()"]},
+                        {"name": "OrderRepository", "attributes": [], "methods": ["save(Order)", "findById(id)"]},
+                    ],
+                    "interfaces": [{"name": "IOrderRepository", "methods": ["save(Order)", "findById(id)"]}],
+                },
+                {
+                    "name": "PaymentService",
+                    "classes": [{"name": "Payment", "attributes": ["amount: number"], "methods": ["process()"]}],
+                    "interfaces": [],
+                },
+            ]
+        else:
+            modules = [
+                {
+                    "name": "ExampleModule",
+                    "classes": [
+                        {"name": "Example", "attributes": ["id: string"], "methods": ["doSomething()"]},
+                    ],
+                    "interfaces": [{"name": "IExample", "methods": ["execute()"]}],
+                },
+            ]
+        deps = [{"from": modules[0]["name"], "to": modules[1]["name"], "type": "uses", "label": ""}] if len(modules) > 1 else []
+        return {"type": "lld", "modules": modules, "dependencies": deps}
+
+    # REAL INTELLIGENCE (LLM) for LLD
+    system_prompt = f"""You are a Senior Software Architect creating a Low-Level Design (LLD). Analyze the user's request and produce a detailed module-level design with classes, interfaces, and dependencies.
+
+BEST PRACTICES / CONTEXT:
+- {context_str}
+
+Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
+Required structure:
+{{
+  "modules": [
+    {{
+      "name": "ModuleName",
+      "classes": [
+        {{"name": "ClassName", "attributes": ["attr: Type"], "methods": ["method(args): ReturnType"]}}
+      ],
+      "interfaces": [
+        {{"name": "IInterfaceName", "methods": ["method signature"]}}
+      ]
+    }}
+  ],
+  "dependencies": [
+    {{"from": "ModuleName", "to": "OtherModule", "type": "uses", "label": "optional description"}}
+  ]
+}}
+
+Rules:
+- Use 2-8 modules. Each module has 1-5 classes and 0-3 interfaces.
+- "from" and "to" in dependencies MUST be exact module names from the modules list.
+- Keep names and labels SHORT. Use standard OOP patterns."""
+
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+    try:
+        response = (llm_to_use or llm).invoke(messages)
+        logger.debug("LLD LLM raw response: %s", response.content[:500] if response.content else "<empty>")
+        plan = _extract_json(response.content)
+        plan["type"] = "lld"
+    except Exception as e:
+        logger.exception("LLD LLM error: %s", e)
+        plan = {
+            "type": "lld",
+            "modules": [
+                {
+                    "name": "ExampleModule",
+                    "classes": [{"name": "Example", "attributes": ["id: string"], "methods": ["doSomething()"]}],
+                    "interfaces": [],
+                },
+            ],
+            "dependencies": [],
+        }
     return plan
 
 
@@ -390,6 +483,17 @@ def planner_node(state: AgentState):
         )
         return {"diagram_plan": plan}
 
+    if diagram_type == "lld":
+        plan = _plan_lld(prompt, llm_to_use, context_str)
+        plan, _valid, _retry = _validate_and_retry(
+            "lld",
+            plan,
+            prompt,
+            llm_to_use,
+            "Keep 'modules' (name, classes, interfaces) and 'dependencies' (from, to, type, label). from/to must be module names.",
+        )
+        return {"diagram_plan": plan}
+
     if diagram_type == "mindtree":
         plan = _plan_mindtree(prompt, llm_to_use)
         plan, _valid, _retry = _validate_and_retry(
@@ -401,7 +505,7 @@ def planner_node(state: AgentState):
         )
         return {"diagram_plan": plan}
     
-    if diagram_type not in ("architecture", "hld", "mindtree"):
+    if diagram_type not in ("architecture", "hld", "lld", "mindtree"):
         from uml_flow import plan_uml
         plan = plan_uml(diagram_type, prompt, llm_to_use)
         return {"diagram_plan": plan}
@@ -455,6 +559,11 @@ def planner_node(state: AgentState):
             "\n\nCRITICAL - Repository analysis: Include ONLY components that appear in the codebase "
             "(Gemfile, package.json, config, README). Do NOT add AWS, Stripe, Redis, etc. unless present."
         )
+        if "monorepo" in prompt.lower():
+            repo_arch_hint += (
+                " MONOREPO: Include ALL projects (apps/*, packages/*). Each app and shared package "
+                "must be a component. Do not merge or omit any project."
+            )
     system_prompt = f"""You are a Senior Solutions Architect. Analyze the user's request and list the necessary IT components.
 
 BEST PRACTICES / CONTEXT:
@@ -1267,6 +1376,86 @@ def _hld_to_mermaid(plan: dict) -> str:
     return "\n".join(lines)
 
 
+def _safe_class_id(name: str) -> str:
+    """Mermaid-safe class id: alphanumeric and underscore only."""
+    s = (str(name) if name else "").strip().replace("-", "_").replace(" ", "_")
+    return "".join(c if c.isalnum() or c == "_" else "_" for c in s)[:30] or "C"
+
+
+def _lld_to_mermaid(plan: dict) -> str:
+    """
+    Generate Mermaid classDiagram for Low-Level Design.
+    Modules with classes, interfaces, and dependencies between modules.
+    """
+    modules = plan.get("modules", [])
+    dependencies = plan.get("dependencies", [])
+
+    if not modules:
+        return "classDiagram\n    class Empty[\"No modules\"]"
+
+    lines = ["classDiagram"]
+    module_to_classes: dict[str, list[str]] = {}
+    all_class_ids: set[str] = set()
+
+    for mod in modules:
+        mod_name = (mod.get("name") or "Module").strip()[:40]
+        mod_id = _safe_class_id(mod_name)
+        module_to_classes[mod_name] = []
+
+        # Interfaces first
+        for iface in mod.get("interfaces") or []:
+            iname = (iface.get("name") or "I").strip()[:40]
+            cid = _safe_class_id(f"{mod_id}_{iname}")
+            if cid in all_class_ids:
+                cid = f"{cid}_{len(all_class_ids)}"
+            all_class_ids.add(cid)
+            module_to_classes[mod_name].append(cid)
+            imethods = iface.get("methods") or []
+            lines.append(f'    class {cid} {{')
+            lines.append("        <<interface>>")
+            for m in imethods[:5]:
+                lines.append(f"        +{str(m)[:40]}")
+            lines.append("    }")
+
+        # Classes
+        for cls in mod.get("classes") or []:
+            cname = (cls.get("name") or "Class").strip()[:40]
+            cid = _safe_class_id(f"{mod_id}_{cname}")
+            if cid in all_class_ids:
+                cid = f"{cid}_{len(all_class_ids)}"
+            all_class_ids.add(cid)
+            module_to_classes[mod_name].append(cid)
+            attrs = cls.get("attributes") or []
+            methods = cls.get("methods") or []
+            lines.append(f'    class {cid} {{')
+            for a in attrs[:5]:
+                lines.append(f"        +{str(a)[:45]}")
+            for m in methods[:5]:
+                lines.append(f"        +{str(m)[:45]}")
+            lines.append("    }")
+
+    # Module dependencies: connect first class of each module
+    for dep in dependencies:
+        fr_mod = (dep.get("from") or "").strip()
+        to_mod = (dep.get("to") or "").strip()
+        dep_type = (dep.get("type") or "uses").strip().lower()
+        label = (dep.get("label") or "").strip()[:30]
+        fr_classes = module_to_classes.get(fr_mod, [])
+        to_classes = module_to_classes.get(to_mod, [])
+        if fr_classes and to_classes:
+            src, tgt = fr_classes[0], to_classes[0]
+            if dep_type == "implements":
+                lines.append(f"    {src} ..|> {tgt}")
+            elif dep_type == "extends":
+                lines.append(f"    {src} --|> {tgt}")
+            elif label:
+                lines.append(f'    {src} --> {tgt} : "{label}"')
+            else:
+                lines.append(f"    {src} --> {tgt}")
+
+    return "\n".join(lines)
+
+
 def _architecture_to_reactflow(components: list[dict]) -> dict:
     """
     Generate ReactFlow nodes and edges for architecture diagrams.
@@ -1526,6 +1715,17 @@ def generator_node(state: AgentState):
             "selectedVersion": 0,
         }}
 
+    # LLD diagram - generate multiple versions
+    if diagram_type == "lld":
+        versions = _generate_lld_versions(plan)
+        return {"json_output": {
+            "mermaid": versions[0]["code"] if versions else "",
+            "nodes": [],
+            "edges": [],
+            "versions": versions,
+            "selectedVersion": 0,
+        }}
+
     # Mind tree diagram - native Mermaid mindmap (radial/organic) + optional Tidy Tree layout
     if diagram_type == "mindtree":
         mermaid_code = _mindtree_to_mermaid(plan)
@@ -1726,6 +1926,29 @@ def _generate_hld_versions(plan: dict) -> list[dict]:
     
     return versions
 
+
+def _generate_lld_versions(plan: dict) -> list[dict]:
+    """Generate multiple LLD layout versions (classDiagram with different directions)."""
+    base_code = _lld_to_mermaid(plan)
+    lines = base_code.split("\n")
+    rest = "\n".join(lines[1:]) if len(lines) > 1 else ""
+    versions = [
+        {
+            "code": "classDiagram\n    direction TB\n" + rest,
+            "layout": "Hierarchical",
+            "direction": "TB",
+            "description": "Top-to-bottom class view",
+        },
+        {
+            "code": "classDiagram\n    direction LR\n" + rest,
+            "layout": "Horizontal",
+            "direction": "LR",
+            "description": "Left-to-right class view",
+        },
+    ]
+    return versions
+
+
 # --- Graph Construction ---
 workflow = StateGraph(AgentState)
 
@@ -1781,6 +2004,23 @@ def format_plan_for_display(plan: dict, diagram_type: str) -> str:
                 label = f.get("label", "") if isinstance(f, dict) else ""
                 if fr and to:
                     lines.append(f"  {fr} → {to}" + (f" ({label})" if label else ""))
+    elif dt == "lld":
+        modules = plan.get("modules", [])
+        if isinstance(modules, list) and modules:
+            for m in modules:
+                if isinstance(m, dict):
+                    name = m.get("name", "?")
+                    classes = m.get("classes") or []
+                    lines.append(f"{name}: {', '.join(c.get('name', '?') for c in classes if isinstance(c, dict))}")
+        deps = plan.get("dependencies") or []
+        if isinstance(deps, list) and deps:
+            lines.append("")
+            lines.append("Dependencies:")
+            for d in deps:
+                if isinstance(d, dict):
+                    fr, to = d.get("from", ""), d.get("to", "")
+                    if fr and to:
+                        lines.append(f"  {fr} → {to}")
     elif dt == "mindtree":
         nodes = plan.get("nodes")
         if isinstance(nodes, list) and nodes:

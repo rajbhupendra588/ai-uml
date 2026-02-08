@@ -139,6 +139,90 @@ def validate_hld(plan: dict) -> ValidationResult:
     return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
 
 
+# --- LLD ---
+def validate_lld(plan: dict) -> ValidationResult:
+    """Validate LLD plan: modules with classes/interfaces, dependencies (from/to must reference module names)."""
+    errors: list[str] = []
+    modules = _ensure_list(plan, "modules")
+    dependencies = _ensure_list(plan, "dependencies")
+
+    module_names = set()
+    repaired_modules = []
+    for i, mod in enumerate(modules):
+        if not isinstance(mod, dict):
+            continue
+        name = (mod.get("name") or "").strip() or f"Module_{i}"
+        name = name[:50]
+        module_names.add(name)
+        classes = _ensure_list(mod, "classes")
+        interfaces = _ensure_list(mod, "interfaces")
+        repaired_classes = []
+        for j, c in enumerate(classes):
+            if isinstance(c, dict):
+                cn = (c.get("name") or "").strip() or f"Class_{j}"
+                attrs = c.get("attributes")
+                attrs = (attrs[:8] if isinstance(attrs, list) else [])
+                methods = c.get("methods")
+                methods = (methods[:8] if isinstance(methods, list) else [])
+                repaired_classes.append({
+                    "name": cn[:50],
+                    "attributes": [str(a)[:60] for a in attrs],
+                    "methods": [str(m)[:60] for m in methods],
+                })
+        repaired_interfaces = []
+        for k, iface in enumerate(interfaces):
+            if isinstance(iface, dict):
+                iname = (iface.get("name") or "").strip() or f"I_{k}"
+                imethods = iface.get("methods")
+                imethods = (imethods[:8] if isinstance(imethods, list) else [])
+                repaired_interfaces.append({
+                    "name": iname[:50],
+                    "methods": [str(m)[:60] for m in imethods],
+                })
+        repaired_modules.append({
+            "name": name,
+            "classes": repaired_classes,
+            "interfaces": repaired_interfaces,
+        })
+
+    if not repaired_modules:
+        errors.append("No valid modules")
+        repaired_modules = [
+            {
+                "name": "ExampleModule",
+                "classes": [{"name": "Example", "attributes": ["id: string"], "methods": ["doSomething()"]}],
+                "interfaces": [],
+            }
+        ]
+        module_names = {"ExampleModule"}
+
+    repaired_deps = []
+    for d in dependencies:
+        if not isinstance(d, dict):
+            continue
+        fr = (d.get("from") or "").strip()[:50]
+        to = (d.get("to") or "").strip()[:50]
+        if fr in module_names and to in module_names:
+            dtype = (d.get("type") or "uses").strip().lower()
+            if dtype not in CLASS_RELATIONSHIP_TYPES:
+                dtype = "uses"
+            repaired_deps.append({
+                "from": fr,
+                "to": to,
+                "type": dtype,
+                "label": (d.get("label") or "")[:40],
+            })
+
+    # Bounds: 2–15 modules
+    if len(repaired_modules) > 15:
+        repaired_modules = repaired_modules[:15]
+        module_names = {m["name"] for m in repaired_modules}
+        repaired_deps = [d for d in repaired_deps if d["from"] in module_names and d["to"] in module_names]
+
+    repaired = {"type": "lld", "modules": repaired_modules, "dependencies": repaired_deps}
+    return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
+
+
 # --- Class ---
 def validate_class(plan: dict) -> ValidationResult:
     """Validate class diagram: classes and relationships; references must match class names."""
@@ -646,6 +730,7 @@ def validate_deployment(plan: dict) -> ValidationResult:
 _VALIDATORS = {
     "architecture": validate_architecture,
     "hld": validate_hld,
+    "lld": validate_lld,
     "mindtree": validate_mindtree,
     "class": validate_class,
     "sequence": validate_sequence,

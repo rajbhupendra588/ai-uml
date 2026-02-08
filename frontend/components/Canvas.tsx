@@ -171,6 +171,12 @@ function summarizePlan(plan: Record<string, unknown>, diagramType: DiagramType):
       if (parts.length) return parts.join(" · ");
     }
   }
+  if (diagramType === "lld") {
+    const modules = plan.modules as Array<{ name?: string; classes?: Array<{ name?: string }> }> | undefined;
+    if (Array.isArray(modules) && modules.length) {
+      return modules.map((m) => `${m.name || "?"}: ${(m.classes || []).map((c) => c.name || "?").join(", ")}`).join(" · ");
+    }
+  }
   if (diagramType === "mindtree") {
     const nodes = plan.nodes as Array<{ label?: string }> | undefined;
     if (Array.isArray(nodes) && nodes.length) {
@@ -221,6 +227,7 @@ function CanvasInner() {
   const [contextMessages, setContextMessages] = useState<ContextMessage[]>([]);
   const [diagramVersions, setDiagramVersions] = useState<DiagramVersion[]>([]);
   const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
+  const [diagramPlan, setDiagramPlan] = useState<Record<string, unknown> | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [newDiagramCount, setNewDiagramCount] = useState(0);
@@ -329,6 +336,7 @@ function CanvasInner() {
     setPendingPlan(null);
     setDiagramVersions([]);
     setSelectedVersionIndex(0);
+    setDiagramPlan(null);
     setExplanation(null);
     setModelResponse(null);
     setNewDiagramCount((c) => c + 1); // Clears GitHub repos panel cache
@@ -497,6 +505,9 @@ function CanvasInner() {
       });
       setDiagramVersions(versions);
       setSelectedVersionIndex(0);
+      if (data.diagram_plan && typeof data.diagram_plan === "object") {
+        setDiagramPlan(data.diagram_plan as Record<string, unknown>);
+      }
 
       if (mermaidCode) {
         setDiagramCode(mermaidCode);
@@ -571,6 +582,9 @@ function CanvasInner() {
       setModelResponse({ nodes: [], edges: [], explanation: explanationText ?? undefined });
       setDiagramVersions(versions);
       setSelectedVersionIndex(0);
+      if (data.diagram_plan && typeof data.diagram_plan === "object") {
+        setDiagramPlan(data.diagram_plan as Record<string, unknown>);
+      }
       if (mermaidCode) {
         setDiagramCode(mermaidCode);
         setNodes(EMPTY_NODES);
@@ -651,6 +665,9 @@ function CanvasInner() {
         });
         setDiagramVersions(versions);
         setSelectedVersionIndex(0);
+        if (data.diagram_plan && typeof data.diagram_plan === "object") {
+          setDiagramPlan(data.diagram_plan as Record<string, unknown>);
+        }
 
         if (mermaidCode) {
           setDiagramCode(mermaidCode);
@@ -805,6 +822,75 @@ function CanvasInner() {
     setContextMessages([]);
     toast.success("Context history cleared");
   }, []);
+
+  const handleGenerateLld = useCallback(
+    async (componentName: string) => {
+      const prompt = `Low-level design for ${componentName} including classes, interfaces, and internal dependencies`;
+      setLoading(true);
+      setPendingPlan(null);
+      try {
+        const response = await fetch(getGenerateUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            diagram_type: "lld",
+            model: selectedModel || null,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          const message =
+            typeof data.detail === "string"
+              ? data.detail
+              : "LLD generation failed.";
+          toast.error(message);
+          return;
+        }
+        const mermaidCode = data.mermaid ?? "";
+        const versions: DiagramVersion[] = data.versions ?? [];
+        const explanationText =
+          typeof data.explanation === "string" && data.explanation.trim()
+            ? data.explanation.trim()
+            : null;
+        setDiagramType("lld");
+        setExplanation(explanationText);
+        setModelResponse({ nodes: [], edges: [], explanation: explanationText ?? undefined });
+        setDiagramVersions(versions);
+        setSelectedVersionIndex(0);
+        if (data.diagram_plan && typeof data.diagram_plan === "object") {
+          setDiagramPlan(data.diagram_plan as Record<string, unknown>);
+        }
+        if (mermaidCode) {
+          setDiagramCode(mermaidCode);
+          setNodes(EMPTY_NODES);
+          setEdges([]);
+          setPast([]);
+          setFuture([]);
+          setContextMessages((prev) => [
+            ...prev,
+            { id: `user-${Date.now()}`, role: "user", content: prompt, timestamp: new Date() },
+            {
+              id: `assistant-${Date.now()}`,
+              role: "assistant",
+              content: explanationText || "LLD diagram generated",
+              timestamp: new Date(),
+              diagramType: "lld",
+            },
+          ]);
+          toast.success("LLD diagram generated");
+        } else {
+          toast.warning("No diagram returned.");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Network error.";
+        toast.error(message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [selectedModel, setNodes, setEdges]
+  );
 
   const handleSelectVersion = useCallback((index: number) => {
     if (diagramVersions[index]) {
@@ -1111,6 +1197,9 @@ function CanvasInner() {
         planSummary={pendingPlan ? summarizePlan(pendingPlan.diagram_plan, pendingPlan.diagram_type) : undefined}
         onSelectRepo={handleGenerateFromRepo}
         newDiagramCount={newDiagramCount}
+        diagramPlan={diagramPlan}
+        diagramType={diagramType}
+        onGenerateLld={handleGenerateLld}
       />
 
       <KeyboardShortcutsHelp isOpen={showHelp} onClose={() => setShowHelp(false)} />

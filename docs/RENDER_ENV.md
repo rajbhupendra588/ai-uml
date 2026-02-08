@@ -24,7 +24,7 @@ Use **Secret** for keys (OPENROUTER_API_KEY, SECRET_KEY, etc.).
 | Key | Value | Secret? |
 |-----|--------|--------|
 | `LOG_LEVEL` | `INFO` | No |
-| `MAX_PROMPT_LENGTH` | `2000` | No |
+| `MAX_PROMPT_LENGTH` | `16000` | No |
 | `OPENAI_API_KEY` | `sk-...` *(if using OpenAI instead of OpenRouter)* | **Yes** |
 | `GITHUB_CLIENT_ID` | *(from GitHub OAuth App)* | **Yes** |
 | `GITHUB_CLIENT_SECRET` | *(from GitHub OAuth App)* | **Yes** |

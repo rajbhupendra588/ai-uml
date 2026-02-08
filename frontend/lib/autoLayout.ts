@@ -97,6 +97,7 @@ export function getLayoutDirection(diagramType: string): LayoutDirection {
       return "LR"; // Left to right for infrastructure
     case "architecture":
     case "hld":
+    case "lld":
     case "mindtree":
       return "TB"; // Layers / mind map top-down
     case "usecase":
@@ -131,6 +132,7 @@ export function getLayoutOptions(diagramType: string): LayoutOptions {
       };
     case "architecture":
     case "hld":
+    case "lld":
       return {
         direction,
         nodeWidth: 220,

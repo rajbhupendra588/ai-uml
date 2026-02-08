@@ -335,8 +335,8 @@ export function PromptBar({
               onBlur={() => setIsFocused(false)}
               placeholder={
                 user
-                  ? "Or paste repo URL"
-                  : "Paste repo URL — sign in with GitHub to list your repos"
+                  ? "Or paste repo or sub-project URL (e.g. .../tree/main/apps/web)"
+                  : "Paste repo or sub-project URL — sign in to list repos"
               }
               className="min-w-0 flex-1 border-0 bg-transparent text-[var(--foreground)] placeholder:text-[var(--muted)] focus-visible:ring-0 focus-visible:ring-offset-0 text-sm"
               disabled={isLoading}
