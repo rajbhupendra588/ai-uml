@@ -192,6 +192,28 @@ body {
   font-weight: 500;
 }
 
+/* 3D Diagram Effect */
+.diagram-3d-active .node rect,
+.diagram-3d-active .node polygon {
+  stroke-width: 1.5;
+  transition: filter 0.3s ease;
+}
+.diagram-3d-active .cluster rect {
+  filter: url(#diagram-3d-shadow);
+  opacity: 0.95;
+}
+.diagram-3d-active .edgePath path,
+.diagram-3d-active .flowchart-link {
+  filter: drop-shadow(1px 2px 2px rgba(0, 0, 0, 0.15));
+}
+.diagram-3d-active .node:hover {
+  transform: translateY(-1px);
+  transition: transform 0.15s ease;
+}
+.mermaid-diagram-fit svg {
+  transition: filter 0.3s ease;
+}
+
 /* Mermaid-style animated edges */
 @keyframes edge-flow {
   from {

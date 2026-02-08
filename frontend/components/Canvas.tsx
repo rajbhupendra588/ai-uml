@@ -19,9 +19,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { PromptBar } from "./PromptBar";
 import HardwareNode from "./HardwareNode";
-import { WelcomeState } from "./WelcomeState";
 import { GeneratingOverlay } from "./GeneratingOverlay";
 import { DiagramTypeSelector } from "./DiagramTypeSelector";
 import { DiagramDownloadMenu } from "./DiagramDownloadMenu";
@@ -51,14 +49,14 @@ import {
 } from "@/lib/api";
 import type { DiagramType } from "@/lib/api";
 import { type ModelResponse } from "./ModelResponsePanel";
-import { ModelSelector } from "./ModelSelector";
 import { ThemeToggle } from "./ThemeToggle";
 import { useTheme } from "./ThemeProvider";
 import { MermaidDiagram } from "./MermaidDiagram";
-import { ContextPanel, ContextToggle, type ContextMessage } from "./ContextPanel";
-import { RightSidebar, RightSidebarToggle } from "./RightSidebar";
+import { SideKick, SideKickToggle, type ContextMessage } from "./SideKick";
+import { cn } from "@/lib/utils";
 import { VersionSwitcher, type DiagramVersion } from "./VersionSwitcher";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
+import { Sparkles, FilePlus2 } from "lucide-react";
 
 const EMPTY_NODES: Node[] = [];
 const MAX_UNDO_HISTORY = 50;
@@ -77,7 +75,6 @@ function CanvasKeyboardShortcuts({
   canRedo,
   onNewDiagram,
   onOpenExport,
-  onToggleContext,
   onToggleSidebar,
   onShowHelp,
   onCloseOverlays,
@@ -88,7 +85,6 @@ function CanvasKeyboardShortcuts({
   canRedo: boolean;
   onNewDiagram: () => void;
   onOpenExport: () => void;
-  onToggleContext: () => void;
   onToggleSidebar: () => void;
   onShowHelp: () => void;
   onCloseOverlays?: () => void;
@@ -123,11 +119,6 @@ function CanvasKeyboardShortcuts({
         onOpenExport();
         return;
       }
-      if (mod && e.key === "1") {
-        e.preventDefault();
-        onToggleContext();
-        return;
-      }
       if (mod && e.key === "2") {
         e.preventDefault();
         onToggleSidebar();
@@ -153,7 +144,6 @@ function CanvasKeyboardShortcuts({
     onRedo,
     onNewDiagram,
     onOpenExport,
-    onToggleContext,
     onToggleSidebar,
     onShowHelp,
     onCloseOverlays,
@@ -161,7 +151,7 @@ function CanvasKeyboardShortcuts({
   return null;
 }
 
-/** Summarize diagram plan for preview (no new deps). */
+/** Summarize diagram plan for preview. */
 function summarizePlan(plan: Record<string, unknown>, diagramType: DiagramType): string {
   if (diagramType === "architecture") {
     const comps = plan.components as Array<{ name?: string }> | undefined;
@@ -227,14 +217,13 @@ function CanvasInner() {
   const [isExporting, setIsExporting] = useState(false);
   const [diagramCode, setDiagramCode] = useState<string | null>(null);
   const [editingNode, setEditingNode] = useState<EditingNode | null>(null);
-  // Context panel and right sidebar - init same on server/client to avoid hydration mismatch
-  const [showContextPanel, setShowContextPanel] = useState(true);
-  const [showRightSidebar, setShowRightSidebar] = useState(true);
+  const [showSideKick, setShowSideKick] = useState(true);
   const [contextMessages, setContextMessages] = useState<ContextMessage[]>([]);
   const [diagramVersions, setDiagramVersions] = useState<DiagramVersion[]>([]);
   const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [newDiagramCount, setNewDiagramCount] = useState(0);
   // Undo/redo history (only for React Flow canvas; not for Mermaid view)
   const [past, setPast] = useState<HistorySnapshot[]>([]);
   const [future, setFuture] = useState<HistorySnapshot[]>([]);
@@ -254,52 +243,36 @@ function CanvasInner() {
       .catch(() => {});
   }, []);
 
-  // Restore persisted state from localStorage - use useLayoutEffect to apply before paint
+  // Restore persisted state from localStorage
   useLayoutEffect(() => {
     try {
-      const panel = localStorage.getItem("showContextPanel");
-      const sidebar = localStorage.getItem("showRightSidebar");
+      const sidebar = localStorage.getItem("showSideKick");
       const raw = localStorage.getItem("contextMessages");
-      const updates: { panel?: boolean; sidebar?: boolean; messages?: ContextMessage[] } = {};
-      if (panel !== null) updates.panel = panel === "true";
-      if (sidebar !== null) updates.sidebar = sidebar === "true";
+      if (sidebar !== null) setShowSideKick(sidebar === "true");
       if (raw) {
         const parsed = JSON.parse(raw) as Array<{ id: string; role: string; content: string; timestamp: string; diagramType?: string }>;
         if (Array.isArray(parsed) && parsed.length > 0) {
-          updates.messages = parsed.map((m) => ({
-            ...m,
-            role: m.role as "user" | "assistant",
-            timestamp: new Date(m.timestamp),
-          }));
+          setContextMessages(
+            parsed.map((m) => ({
+              ...m,
+              role: m.role as "user" | "assistant",
+              timestamp: new Date(m.timestamp),
+            }))
+          );
         }
-      }
-      if (Object.keys(updates).length > 0) {
-        if (updates.panel !== undefined) setShowContextPanel(updates.panel);
-        if (updates.sidebar !== undefined) setShowRightSidebar(updates.sidebar);
-        if (updates.messages !== undefined) setContextMessages(updates.messages);
       }
     } catch {
       // ignore
     }
   }, []);
 
-  // Persist context panel and right sidebar visibility
   useEffect(() => {
     try {
-      localStorage.setItem("showContextPanel", String(showContextPanel));
-    } catch {
-      // ignore
-    }
-  }, [showContextPanel]);
-  useEffect(() => {
-    try {
-      localStorage.setItem("showRightSidebar", String(showRightSidebar));
-    } catch {
-      // ignore
-    }
-  }, [showRightSidebar]);
+      localStorage.setItem("showSideKick", String(showSideKick));
+    } catch { /* ignore */ }
+  }, [showSideKick]);
 
-  // Persist context messages (cap at 50 to avoid huge storage)
+  // Persist context messages (cap at 50)
   useEffect(() => {
     if (contextMessages.length === 0) return;
     try {
@@ -308,9 +281,7 @@ function CanvasInner() {
         timestamp: m.timestamp.toISOString(),
       }));
       localStorage.setItem("contextMessages", JSON.stringify(toStore));
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, [contextMessages]);
 
   const pushPast = useCallback(() => {
@@ -318,10 +289,7 @@ function CanvasInner() {
       skipNextPushRef.current = false;
       return;
     }
-    setPast((prev) => {
-      const next = [...prev, cloneSnapshot(nodes, edges)].slice(-MAX_UNDO_HISTORY);
-      return next;
-    });
+    setPast((prev) => [...prev, cloneSnapshot(nodes, edges)].slice(-MAX_UNDO_HISTORY));
     setFuture([]);
   }, [nodes, edges]);
 
@@ -362,6 +330,8 @@ function CanvasInner() {
     setDiagramVersions([]);
     setSelectedVersionIndex(0);
     setExplanation(null);
+    setModelResponse(null);
+    setNewDiagramCount((c) => c + 1); // Clears GitHub repos panel cache
     toast.success("New diagram");
   }, [setNodes, setEdges]);
 
@@ -428,21 +398,7 @@ function CanvasInner() {
     pushPast();
   }, [pushPast]);
 
-  // Convert edges to Mermaid-style edges
-  const convertToMermaidEdges = useCallback((edges: Edge[]): Edge[] => {
-    return edges.map((edge) => ({
-      ...edge,
-      type: "mermaid",
-      animated: edge.animated ?? true,
-      markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed },
-      data: {
-        ...edge.data,
-        label: edge.label || edge.data?.label,
-        animated: edge.animated ?? true,
-      },
-    }));
-  }, []);
-
+  /* ---------- Prompt handler ---------- */
   const handlePrompt = useCallback(async (prompt: string) => {
     const trimmedPrompt = (prompt ?? "").trim();
     lastPromptRef.current = trimmedPrompt;
@@ -483,6 +439,16 @@ function CanvasInner() {
           diagram_type: (data.diagram_type as DiagramType) || diagramType,
           prompt: trimmedPrompt,
         });
+        // Add user message for context
+        setContextMessages((prev) => [
+          ...prev,
+          {
+            id: `user-${Date.now()}`,
+            role: "user",
+            content: trimmedPrompt,
+            timestamp: new Date(),
+          },
+        ]);
         toast.success("Plan ready — confirm to generate diagram");
         setLoading(false);
         return;
@@ -529,8 +495,6 @@ function CanvasInner() {
         edges: [],
         explanation: explanationText ?? undefined,
       });
-      
-      // Store versions and reset selected index
       setDiagramVersions(versions);
       setSelectedVersionIndex(0);
 
@@ -540,7 +504,6 @@ function CanvasInner() {
         setEdges([]);
         setPast([]);
         setFuture([]);
-        // Add to context history
         setContextMessages((prev) => [
           ...prev,
           {
@@ -593,9 +556,7 @@ function CanvasInner() {
         const message =
           typeof data.detail === "string"
             ? data.detail
-            : Array.isArray(data.detail) && data.detail[0]?.msg
-              ? `${data.detail[0].loc?.join(".") ?? "request"}: ${data.detail[0].msg}`
-              : "Diagram generation failed.";
+            : "Diagram generation failed.";
         toast.error(message);
         setLoading(false);
         return;
@@ -607,11 +568,7 @@ function CanvasInner() {
           ? data.explanation.trim()
           : null;
       setExplanation(explanationText);
-      setModelResponse({
-        nodes: [],
-        edges: [],
-        explanation: explanationText ?? undefined,
-      });
+      setModelResponse({ nodes: [], edges: [], explanation: explanationText ?? undefined });
       setDiagramVersions(versions);
       setSelectedVersionIndex(0);
       if (mermaidCode) {
@@ -622,12 +579,6 @@ function CanvasInner() {
         setFuture([]);
         setContextMessages((prev) => [
           ...prev,
-          {
-            id: `user-${Date.now()}`,
-            role: "user",
-            content: pendingPlan.prompt,
-            timestamp: new Date(),
-          },
           {
             id: `assistant-${Date.now()}`,
             role: "assistant",
@@ -643,8 +594,7 @@ function CanvasInner() {
       }
       setPendingPlan(null);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Network error.";
+      const message = error instanceof Error ? error.message : "Network error.";
       toast.error(message);
     } finally {
       setLoading(false);
@@ -675,9 +625,7 @@ function CanvasInner() {
           const message =
             typeof data.detail === "string"
               ? data.detail
-              : Array.isArray(data.detail) && data.detail[0]?.msg
-                ? `${data.detail[0].loc?.join(".") ?? "request"}: ${data.detail[0].msg}`
-                : "Repo analysis or diagram generation failed. Please try again.";
+              : "Repo analysis or diagram generation failed.";
           toast.error(message);
           return;
         }
@@ -692,15 +640,15 @@ function CanvasInner() {
         setExplanation(explanationText);
         const repoUrlReturned = typeof data.repo_url === "string" ? data.repo_url : undefined;
         const repoExplanationReturned = typeof data.repo_explanation === "string" ? data.repo_explanation : undefined;
+        const diagramPlanSummary = typeof data.diagram_plan_summary === "string" ? data.diagram_plan_summary : undefined;
         setModelResponse({
           nodes: [],
           edges: [],
           explanation: explanationText ?? undefined,
           repo_url: repoUrlReturned,
           repo_explanation: repoExplanationReturned,
+          diagram_plan_summary: diagramPlanSummary,
         });
-        
-        // Store versions and reset selected index
         setDiagramVersions(versions);
         setSelectedVersionIndex(0);
 
@@ -710,19 +658,26 @@ function CanvasInner() {
           setEdges([]);
           setPast([]);
           setFuture([]);
-          // Add to context history
+          const now = Date.now();
+          const assistantContent = [
+            repoExplanationReturned && `REPOSITORY ANALYSIS\n\n${repoExplanationReturned}`,
+            diagramPlanSummary && `\n\n━━━ DIAGRAM PLAN (${diagramType}) ━━━\n\n${diagramPlanSummary}`,
+            "\n\nDiagram generated successfully.",
+          ]
+            .filter(Boolean)
+            .join("");
           setContextMessages((prev) => [
             ...prev,
             {
-              id: `user-${Date.now()}`,
+              id: `user-${now}`,
               role: "user",
               content: `Generate diagram from repo: ${repoUrl}`,
               timestamp: new Date(),
             },
             {
-              id: `assistant-${Date.now()}`,
+              id: `assistant-${now}`,
               role: "assistant",
-              content: explanationText || "Diagram generated from repository",
+              content: assistantContent || explanationText || "Diagram generated from repository",
               timestamp: new Date(),
               diagramType,
             },
@@ -730,7 +685,7 @@ function CanvasInner() {
           toast.success("Diagram generated from repository");
         } else {
           setDiagramCode(null);
-          toast.warning("No diagram returned. Try a different repo or diagram type.");
+          toast.warning("No diagram returned.");
         }
       } catch (error) {
         const message =
@@ -765,7 +720,6 @@ function CanvasInner() {
 
   const handlePrepareExport = useCallback((exportFn: () => Promise<void>) => {
     setIsExporting(true);
-    // Wait for React to commit and hide Download/UI so they don't appear in the export
     setTimeout(async () => {
       try {
         await exportFn();
@@ -796,34 +750,44 @@ function CanvasInner() {
     setEditingNode(null);
   }, []);
 
-  const handleContextMessage = useCallback(
+  /* SideKick chat message handler - combines context + generates */
+  const handleSideKickMessage = useCallback(
     (message: string) => {
-      // Combine with previous context to refine the diagram
       const contextStr = contextMessages
-        .slice(-4) // Last 4 messages for context
+        .slice(-4)
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n");
-      
       const refinedPrompt = contextStr
         ? `Previous context:\n${contextStr}\n\nUser's refinement: ${message}`
         : message;
-      
       handlePrompt(refinedPrompt);
     },
     [contextMessages, handlePrompt]
+  );
+
+  /* SideKick primary submit - direct prompt (no context prefix for first message) */
+  const handleSideKickSubmit = useCallback(
+    (prompt: string) => {
+      if (contextMessages.length === 0) {
+        // First message: send directly
+        handlePrompt(prompt);
+      } else {
+        // Subsequent messages: include context
+        handleSideKickMessage(prompt);
+      }
+    },
+    [contextMessages, handlePrompt, handleSideKickMessage]
   );
 
   const handleEditMessage = useCallback(
     (messageId: string, newContent: string) => {
       const idx = contextMessages.findIndex((m) => m.id === messageId);
       if (idx < 0) return;
-      // Replace the message and remove everything after it (assistant response + subsequent)
       const updated = [
         ...contextMessages.slice(0, idx),
         { ...contextMessages[idx], content: newContent, timestamp: new Date() },
       ];
       setContextMessages(updated);
-      // Regenerate with the edited prompt (use context from messages before this one)
       const contextStr = updated
         .slice(0, -1)
         .slice(-4)
@@ -842,7 +806,6 @@ function CanvasInner() {
     toast.success("Context history cleared");
   }, []);
 
-  // Handle version selection
   const handleSelectVersion = useCallback((index: number) => {
     if (diagramVersions[index]) {
       setSelectedVersionIndex(index);
@@ -851,41 +814,155 @@ function CanvasInner() {
     }
   }, [diagramVersions]);
 
-  const handleSelectRepo = useCallback(
-    (repoUrl: string) => {
-      handleGenerateFromRepo(repoUrl);
-    },
-    [handleGenerateFromRepo]
-  );
-
   return (
     <div className="relative flex h-full w-full flex-row overflow-hidden">
-      {/* Left sidebar - Context Panel */}
-      <ContextPanel
-        messages={contextMessages}
-        onSendMessage={handleContextMessage}
-        onEditMessage={handleEditMessage}
-        onClearHistory={handleClearContextHistory}
-        isLoading={loading}
-        isOpen={showContextPanel}
-        onClose={() => setShowContextPanel(false)}
-      />
+      {/* ==================== Main content area ==================== */}
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-canvas transition-colors duration-300">
+        {/* ---- Top toolbar ---- */}
+        <div className="flex shrink-0 items-center gap-3 border-b border-panel bg-panel px-4 py-2 transition-colors duration-300">
+          {/* New diagram */}
+          {hasDiagram && (
+            <button
+              type="button"
+              onClick={handleNewDiagram}
+              className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition"
+              title="New diagram (Ctrl+N)"
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+              New
+            </button>
+          )}
 
-      {/* Main content area */}
-      <div 
-        className="grid h-full min-h-0 min-w-0 flex-1 bg-canvas transition-colors duration-300" 
-        style={{ gridTemplateRows: "minmax(0, 1fr) auto" }}
-      >
-        {/* Main diagram area - constrained to viewport, diagram fits or scrolls inside */}
+          {/* Diagram type */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-muted">Diagram:</span>
+            <DiagramTypeSelector
+              value={diagramType}
+              onChange={setDiagramType}
+              disabled={loading}
+            />
+          </div>
+
+          {/* Plan first toggle */}
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={planFirstMode}
+              onChange={(e) => setPlanFirstMode(e.target.checked)}
+              disabled={loading}
+              className="rounded border-[var(--border)]"
+            />
+            <span>Plan first</span>
+          </label>
+
+          {/* Version Switcher - inline in toolbar */}
+          {!showWelcome && diagramVersions.length > 1 && (
+            <div className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--card)] p-0.5">
+              {diagramVersions.map((version, index) => {
+                const isSelected = index === selectedVersionIndex;
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    onClick={() => handleSelectVersion(index)}
+                    className={cn(
+                      "rounded-md px-2 py-1 text-xs font-medium transition",
+                      isSelected
+                        ? "bg-[var(--primary)] text-white"
+                        : "text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+                    )}
+                    title={version.description}
+                  >
+                    {version.layout}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Undo/Redo */}
+          {!showWelcome && !diagramCode && (
+            <>
+              <button
+                type="button"
+                onClick={undo}
+                disabled={past.length === 0 || loading}
+                className="flex h-8 items-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:pointer-events-none"
+                title="Undo (Ctrl+Z)"
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                onClick={redo}
+                disabled={future.length === 0 || loading}
+                className="flex h-8 items-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:pointer-events-none"
+                title="Redo (Ctrl+Shift+Z)"
+              >
+                Redo
+              </button>
+            </>
+          )}
+
+          {/* Download */}
+          {!showWelcome && (
+            <DiagramDownloadMenu
+              containerRef={flowContainerRef}
+              diagramType={diagramType}
+              nodes={nodes}
+              edges={edges}
+              diagramCode={diagramCode}
+              onPrepareExport={handlePrepareExport}
+              disabled={loading}
+              open={downloadMenuOpen}
+              onOpenChange={setDownloadMenuOpen}
+            />
+          )}
+
+          <ThemeToggle />
+
+          {/* Architect panel toggle */}
+          <SideKickToggle
+            onClick={() => setShowSideKick((p) => !p)}
+            isOpen={showSideKick}
+          />
+        </div>
+
+        {/* ---- Canvas / Diagram area ---- */}
         <div
           ref={flowContainerRef}
           role="main"
           aria-label={diagramCode ? "Rendered diagram" : "Diagram canvas"}
           data-exporting={isExporting ? "true" : undefined}
-          className="relative min-h-0 min-w-0 overflow-auto bg-canvas transition-colors duration-300 data-[exporting=true]:[&_[data-diagram-download-hide]]:invisible"
+          className="relative flex-1 min-h-0 min-w-0 overflow-auto bg-canvas transition-colors duration-300 data-[exporting=true]:[&_[data-diagram-download-hide]]:invisible"
         >
           {diagramCode ? (
             <MermaidDiagram code={diagramCode} className="h-full min-h-0 w-full min-w-0" />
+          ) : showWelcome ? (
+            /* ---- Empty canvas placeholder ---- */
+            <div className="flex h-full flex-col items-center justify-center text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--primary)]/10">
+                <Sparkles className="h-8 w-8 text-[var(--primary)] opacity-60" />
+              </div>
+              <p className="text-lg font-medium text-[var(--foreground)] opacity-80">
+                Your diagram will appear here
+              </p>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Use the Architect panel to describe your system
+              </p>
+              {!showSideKick && (
+                <button
+                  type="button"
+                  onClick={() => setShowSideKick(true)}
+                  className="mt-4 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition"
+                >
+                  Open Architect
+                </button>
+              )}
+            </div>
           ) : (
             <ReactFlow
               nodes={nodes}
@@ -897,8 +974,8 @@ function CanvasInner() {
               onConnect={onConnect}
               onNodeDragStart={onNodeDragStart}
               onNodeDoubleClick={handleNodeDoubleClick}
-              defaultEdgeOptions={{ 
-                type: "mermaid", 
+              defaultEdgeOptions={{
+                type: "mermaid",
                 animated: true,
                 markerEnd: { type: MarkerType.ArrowClosed },
               }}
@@ -921,8 +998,7 @@ function CanvasInner() {
                 canRedo={future.length > 0}
                 onNewDiagram={handleNewDiagram}
                 onOpenExport={() => setDownloadMenuOpen(true)}
-                onToggleContext={() => setShowContextPanel((p) => !p)}
-                onToggleSidebar={() => setShowRightSidebar((p) => !p)}
+                onToggleSidebar={() => setShowSideKick((p) => !p)}
                 onShowHelp={() => setShowHelp(true)}
                 onCloseOverlays={() => {
                   setEditingNode(null);
@@ -934,8 +1010,7 @@ function CanvasInner() {
                   <button
                     type="button"
                     onClick={() => openEditForNode(selectedNode)}
-                    className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-sm font-medium text-[var(--card-foreground)] shadow hover:bg-[var(--secondary)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-                    aria-label="Edit selected node text"
+                    className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-sm font-medium text-[var(--card-foreground)] shadow hover:bg-[var(--secondary)]"
                   >
                     Edit text
                   </button>
@@ -943,28 +1018,55 @@ function CanvasInner() {
               )}
             </ReactFlow>
           )}
-          {!showWelcome && (
-            <DiagramDownloadMenu
-              containerRef={flowContainerRef}
-              diagramType={diagramType}
-              nodes={nodes}
-              edges={edges}
-              diagramCode={diagramCode}
-              onPrepareExport={handlePrepareExport}
-              disabled={loading}
-              open={downloadMenuOpen}
-              onOpenChange={setDownloadMenuOpen}
-            />
-          )}
 
-          {/* Version Switcher - only show when multiple versions available */}
-          {!showWelcome && diagramVersions.length > 1 && (
-            <div data-diagram-download-hide className="absolute left-3 top-3 z-20">
-              <VersionSwitcher
-                versions={diagramVersions}
-                selectedIndex={selectedVersionIndex}
-                onSelectVersion={handleSelectVersion}
-              />
+          {/* Zoom controls for Mermaid diagrams */}
+          {diagramCode && (
+            <div data-diagram-download-hide className="absolute bottom-4 right-4 z-20 flex flex-col gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  const svg = flowContainerRef.current?.querySelector("svg");
+                  if (!svg) return;
+                  const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
+                  const next = Math.min(cur + 0.15, 3);
+                  svg.style.transform = `scale(${next})`;
+                  svg.style.transformOrigin = "center center";
+                }}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
+                title="Zoom in"
+                aria-label="Zoom in"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const svg = flowContainerRef.current?.querySelector("svg");
+                  if (!svg) return;
+                  const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
+                  const next = Math.max(cur - 0.15, 0.3);
+                  svg.style.transform = `scale(${next})`;
+                  svg.style.transformOrigin = "center center";
+                }}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
+                title="Zoom out"
+                aria-label="Zoom out"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const svg = flowContainerRef.current?.querySelector("svg");
+                  if (!svg) return;
+                  svg.style.transform = "scale(1)";
+                }}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-bold text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
+                title="Reset zoom"
+                aria-label="Reset zoom"
+              >
+                1:1
+              </button>
             </div>
           )}
 
@@ -976,11 +1078,8 @@ function CanvasInner() {
           )}
 
           {!showWelcome && !diagramCode && !editingNode && (
-            <p
-              data-diagram-download-hide
-              className="absolute bottom-4 left-4 z-10 text-xs text-slate-500"
-            >
-              Select a node, then click &quot;Edit text&quot; above — or double-click the node
+            <p data-diagram-download-hide className="absolute bottom-4 left-4 z-10 text-xs text-slate-500">
+              Select a node, then click &quot;Edit text&quot; above — or double-click
             </p>
           )}
 
@@ -992,154 +1091,26 @@ function CanvasInner() {
             />
           )}
 
-          {showWelcome && !loading && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center">
-              <div className="pointer-events-auto flex flex-col items-center">
-                <PromptBar
-                  onSubmit={handlePrompt}
-                  onGenerateFromRepo={handleGenerateFromRepo}
-                  isLoading={loading}
-                  centered
-                />
-                <WelcomeState onExampleClick={handlePrompt} />
-              </div>
-            </div>
-          )}
-
           {loading && <GeneratingOverlay />}
-
-          {pendingPlan && !loading && (
-            <div
-              data-diagram-download-hide
-              className="absolute bottom-20 left-1/2 z-20 w-full max-w-xl -translate-x-1/2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-lg"
-            >
-              <p className="text-xs font-medium text-[var(--muted)]">Plan preview</p>
-              <p className="mt-1 line-clamp-2 text-sm text-[var(--foreground)]">
-                {summarizePlan(pendingPlan.diagram_plan, pendingPlan.diagram_type)}
-              </p>
-              <div className="mt-3 flex gap-2">
-                <Button
-                  size="sm"
-                  className="bg-[var(--primary)] text-white hover:opacity-90"
-                  onClick={handleConfirmPlan}
-                >
-                  Generate diagram
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-[var(--border)]"
-                  onClick={handleCancelPlan}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Bottom control bar - always visible */}
-        <div 
-          className="flex shrink-0 items-center border-t border-panel bg-panel px-4 py-3 transition-colors duration-300"
-          style={{ minHeight: "60px", zIndex: 50 }}
-        >
-          <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-4">
-            {/* Context toggle */}
-            <ContextToggle
-              onClick={() => setShowContextPanel((prev) => !prev)}
-              isOpen={showContextPanel}
-              messageCount={contextMessages.length}
-            />
-            <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted">
-              <input
-                type="checkbox"
-                checked={planFirstMode}
-                onChange={(e) => setPlanFirstMode(e.target.checked)}
-                disabled={loading}
-                className="rounded border-[var(--border)]"
-                aria-label="Preview plan first"
-              />
-              <span>Preview plan first</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted">
-                Diagram:
-              </span>
-              <DiagramTypeSelector
-                value={diagramType}
-                onChange={setDiagramType}
-                disabled={loading}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted">
-                Model:
-              </span>
-              <ModelSelector
-                value={selectedModel}
-                options={modelOptions}
-                onChange={setSelectedModel}
-                disabled={loading}
-              />
-            </div>
-            {!showWelcome && !diagramCode && (
-              <div className="flex items-center gap-1" role="group" aria-label="Undo redo">
-                <button
-                  type="button"
-                  onClick={undo}
-                  disabled={past.length === 0 || loading}
-                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-50 disabled:pointer-events-none"
-                  title="Undo (Ctrl+Z)"
-                  aria-label="Undo"
-                >
-                  Undo
-                </button>
-                <button
-                  type="button"
-                  onClick={redo}
-                  disabled={future.length === 0 || loading}
-                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-50 disabled:pointer-events-none"
-                  title="Redo (Ctrl+Shift+Z)"
-                  aria-label="Redo"
-                >
-                  Redo
-                </button>
-              </div>
-            )}
-            <ThemeToggle />
-            <button
-              type="button"
-              onClick={() => setShowHelp(true)}
-              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] p-2 text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
-              title="Keyboard shortcuts (?)"
-              aria-label="Show keyboard shortcuts"
-            >
-              <span className="text-lg font-medium">?</span>
-            </button>
-            <RightSidebarToggle
-              onClick={() => setShowRightSidebar((prev) => !prev)}
-              isOpen={showRightSidebar}
-            />
-            {!showWelcome && (
-              <div className="ml-auto min-w-0 flex-1 max-w-5xl">
-                <PromptBar
-                  onSubmit={handlePrompt}
-                  onGenerateFromRepo={handleGenerateFromRepo}
-                  isLoading={loading}
-                />
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
-      {/* Right sidebar - GitHub + Model Response */}
-      <RightSidebar
-        isOpen={showRightSidebar}
-        onClose={() => setShowRightSidebar(false)}
-        onSelectRepo={handleSelectRepo}
+      {/* ==================== SideKick (right panel) ==================== */}
+      <SideKick
+        messages={contextMessages}
+        onSendMessage={handleSideKickMessage}
+        onSubmit={handleSideKickSubmit}
+        onEditMessage={handleEditMessage}
+        onClearHistory={handleClearContextHistory}
         isLoading={loading}
-        modelResponse={modelResponse}
+        isOpen={showSideKick}
+        onClose={() => setShowSideKick(false)}
+        pendingPlan={pendingPlan}
+        onConfirmPlan={handleConfirmPlan}
+        onCancelPlan={handleCancelPlan}
+        planSummary={pendingPlan ? summarizePlan(pendingPlan.diagram_plan, pendingPlan.diagram_type) : undefined}
+        onSelectRepo={handleGenerateFromRepo}
+        newDiagramCount={newDiagramCount}
       />
 
       <KeyboardShortcutsHelp isOpen={showHelp} onClose={() => setShowHelp(false)} />

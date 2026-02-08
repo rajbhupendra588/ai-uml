@@ -24,6 +24,10 @@ export function getGenerateFromPlanUrl(): string {
   return `${getApiBaseUrl()}/api/v1/generate-from-plan`;
 }
 
+export function getExportUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/export`;
+}
+
 export function getHealthUrl(): string {
   return `${getApiBaseUrl()}/health`;
 }

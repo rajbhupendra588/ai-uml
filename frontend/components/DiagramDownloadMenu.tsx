@@ -211,20 +211,18 @@ export function DiagramDownloadMenu({
   }, [busy, diagramType, nodes, edges, diagramCode]);
 
   return (
-    <div className={cn("absolute right-3 top-3 z-10 flex gap-2", className)}>
-      <div data-diagram-download-hide>
+    <div className={cn("flex gap-2", className)} data-diagram-download-hide>
         <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
+          <button
+            type="button"
             disabled={disabled || busy}
-            className="gap-2 border-slate-600/80 bg-slate-800/90 text-slate-200 shadow hover:bg-slate-700/90 hover:text-slate-100 focus-visible:ring-slate-500"
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-40 disabled:pointer-events-none transition"
             aria-label="Download diagram"
+            title="Download"
           >
-            <Download className="size-4 shrink-0" aria-hidden />
-            <span className="hidden sm:inline">Download</span>
-          </Button>
+            <Download className="h-4 w-4" aria-hidden />
+          </button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content
@@ -272,7 +270,6 @@ export function DiagramDownloadMenu({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
-      </div>
     </div>
   );
 }

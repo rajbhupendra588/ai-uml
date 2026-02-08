@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 
-from config import API_BASE_URL, CORS_ORIGINS, API_V1_PREFIX, ENVIRONMENT, FRONTEND_URL, LOG_LEVEL, MAX_PROMPT_LENGTH, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+from config import API_BASE_URL, CORS_ORIGINS, API_V1_PREFIX, ENVIRONMENT, FRONTEND_URL, LOG_LEVEL, MAX_PROMPT_LENGTH, REPO_ANALYSIS_MAX_LENGTH, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
 
 # --- Structured logging ---
 logging.basicConfig(
@@ -140,6 +140,12 @@ class GenerateFromPlanRequest(BaseModel):
     diagram_type: DiagramType = Field(..., description="Same diagram_type used for /plan")
 
 
+class ExportRequest(BaseModel):
+    diagram_plan: dict = Field(..., description="Plan from POST /api/v1/plan or generate result")
+    diagram_type: DiagramType = Field(..., description="Diagram type")
+    tool: str = Field(default="drawio", description="Export target: drawio")
+
+
 # --- Health ---
 @app.get("/health")
 def health():
@@ -237,23 +243,77 @@ def generate_diagram_from_plan(request: GenerateFromPlanRequest):
         raise HTTPException(status_code=500, detail="Diagram generation from plan failed. Please try again.")
 
 
+@app.post(f"{API_V1_PREFIX}/export")
+def export_diagram(request: ExportRequest):
+    """
+    Export diagram to tool-native format (Draw.io, etc.).
+    Converts plan → IR → validate → tool-specific output. Editable in target tool.
+    """
+    from diagram_validator import get_valid_plan
+    from diagram_ir import plan_to_ir, validate_ir
+    from renderers.drawio import ir_to_drawio
+    try:
+        plan = get_valid_plan(request.diagram_type, request.diagram_plan)
+        ir = plan_to_ir(request.diagram_type, plan)
+        is_valid, errors = validate_ir(ir)
+        if not is_valid:
+            logger.warning("export_ir_validation_failed", extra={"errors": errors[:5]})
+            # Repair: filter invalid edges and continue (no orphan connectors)
+            ir["edges"] = [
+                e for e in ir.get("edges", [])
+                if e.get("from") in {n.get("id") for n in ir.get("nodes", [])}
+                and e.get("to") in {n.get("id") for n in ir.get("nodes", [])}
+            ]
+        tool = "drawio" if request.tool in ("drawio", "draw.io") else "drawio"
+        if tool == "drawio":
+            content = ir_to_drawio(ir)
+            return {
+                "content": content,
+                "format": "drawio",
+                "filename": f"{request.diagram_type}-diagram.drawio",
+                "mime_type": "application/xml",
+            }
+        raise HTTPException(status_code=400, detail=f"Unsupported export tool: {request.tool}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("export_error", extra={"diagram_type": request.diagram_type, "tool": request.tool})
+        raise HTTPException(status_code=500, detail="Export failed. Please try again.")
+
+
 @app.post(f"{API_V1_PREFIX}/generate-from-repo")
 def generate_diagram_from_repo(request: GenerateFromRepoRequest):
-    """Analyze a GitHub repo and generate the chosen diagram type from its structure and key files."""
+    """
+    Deep-analyze a GitHub repo and generate the chosen diagram type.
+    Flow: 1) Deep repo analysis, 2) LLM repo explanation, 3) Diagram plan, 4) Diagram.
+    Returns repo_explanation (for chat), diagram_plan (for chat), and mermaid diagram.
+    """
     import httpx
-    from agent import run_agent
+    from agent import run_agent, generate_repo_explanation, format_plan_for_display
     from github_repo import analyze_repo
     try:
         logger.info(
             "generate_from_repo",
             extra={"repo_url": request.repo_url[:80], "diagram_type": request.diagram_type, "model": request.model},
         )
-        summary = analyze_repo(request.repo_url.strip())
-        if len(summary) > MAX_PROMPT_LENGTH:
-            summary = summary[:MAX_PROMPT_LENGTH] + "\n... (truncated)"
-        result = run_agent(summary, request.diagram_type, request.model)
+        raw_summary = analyze_repo(request.repo_url.strip())
+        if len(raw_summary) > REPO_ANALYSIS_MAX_LENGTH:
+            raw_summary = raw_summary[:REPO_ANALYSIS_MAX_LENGTH] + "\n... (truncated for analysis)"
+        repo_explanation = generate_repo_explanation(raw_summary, request.model)
+        # Strict prompt: prevent hallucinating AWS/Stripe/etc. not in the repo
+        repo_prompt = (
+            "CRITICAL - Repository analysis mode: Extract ONLY components that are explicitly "
+            "mentioned or clearly evident in the codebase below. Do NOT invent or assume cloud "
+            "components (AWS, GCP, Stripe, SendGrid, SQS, Redis, etc.) unless they appear in the "
+            "files. If the repo is a simple app (e.g. Ruby on Rails, Heroku), show only what exists.\n\n"
+            + raw_summary
+        )
+        result = run_agent(repo_prompt, request.diagram_type, request.model)
         result["repo_url"] = request.repo_url.strip()
-        result["repo_explanation"] = summary
+        result["repo_explanation"] = repo_explanation
+        diagram_plan = result.get("diagram_plan")
+        if diagram_plan:
+            result["diagram_plan_summary"] = format_plan_for_display(diagram_plan, request.diagram_type)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

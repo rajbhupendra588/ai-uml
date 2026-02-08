@@ -22,6 +22,8 @@ KEY_FILES = [
     "README.md",
     "README",
     "package.json",
+    "Gemfile",
+    "Gemfile.lock",
     "requirements.txt",
     "pyproject.toml",
     "go.mod",
@@ -33,6 +35,15 @@ KEY_FILES = [
     "docker-compose.yaml",
     "Dockerfile",
     "Makefile",
+]
+
+# Source entry points and key modules for deeper understanding
+SOURCE_PATTERNS = [
+    "main.py", "app.py", "index.py", "server.py", "api.py",
+    "main.ts", "main.js", "index.ts", "index.js", "app.tsx", "app.jsx",
+    "src/main.py", "src/app.py", "src/index.ts", "src/index.js",
+    "src/App.tsx", "src/App.jsx", "app/main.py", "app/__init__.py",
+    "cmd/main.go", "internal/main.go", "main.go",
 ]
 
 
@@ -120,8 +131,35 @@ def fetch_file_content(
     return r.text
 
 
+def _gather_file_tree_summary(tree: list[dict]) -> str:
+    """Build a structure summary: directories with file counts and key paths."""
+    dir_files: dict[str, list[str]] = {}
+    root_files: list[str] = []
+    for entry in tree:
+        path = (entry.get("path") or "").strip()
+        if not path or path.startswith("."):
+            continue
+        parts = path.split("/")
+        if len(parts) == 1:
+            root_files.append(path)
+        else:
+            top = parts[0]
+            if top not in dir_files:
+                dir_files[top] = []
+            dir_files[top].append(path)
+    lines = []
+    if root_files:
+        lines.append("Root files: " + ", ".join(sorted(root_files)[:40]))
+    for top in sorted(dir_files.keys())[:20]:
+        files = dir_files[top]
+        sample = sorted(files)[:15]
+        more = f" (+{len(files) - 15} more)" if len(files) > 15 else ""
+        lines.append(f"  {top}/: {', '.join(sample)}{more}")
+    return "\n".join(lines) if lines else ""
+
+
 def build_repo_summary(owner: str, repo: str, ref: str, repo_info: dict, tree: list[dict], file_contents: dict[str, str]) -> str:
-    """Build a single text summary suitable as the prompt for diagram generation."""
+    """Build a detailed text summary for deep repo analysis and diagram generation."""
     lines = []
     name = repo_info.get("name") or repo
     desc = (repo_info.get("description") or "").strip()
@@ -133,33 +171,22 @@ def build_repo_summary(owner: str, repo: str, ref: str, repo_info: dict, tree: l
     if lang:
         lines.append(f"Primary language: {lang}")
 
-    # Top-level dirs and key files from tree
-    top_dirs = set()
-    top_files = []
-    for entry in tree:
-        path = (entry.get("path") or "").strip()
-        if not path or "/" not in path and path.startswith("."):
-            continue
-        parts = path.split("/")
-        if len(parts) == 1:
-            top_files.append(path)
-        else:
-            top_dirs.add(parts[0])
-    if top_dirs:
+    # Full directory structure summary
+    tree_summary = _gather_file_tree_summary(tree)
+    if tree_summary:
         lines.append("")
-        lines.append("Top-level directories: " + ", ".join(sorted(top_dirs)[:25]))
-    if top_files:
-        lines.append("Top-level files: " + ", ".join(sorted(top_files)[:30]))
+        lines.append("Repository structure:")
+        lines.append(tree_summary)
 
-    # Key file contents (truncated)
+    # Key file contents (longer truncation for README, moderate for others)
     for rel_path, content in file_contents.items():
         if not content or not content.strip():
             continue
         lines.append("")
         lines.append(f"--- {rel_path} ---")
-        # First N chars to avoid huge prompts
-        truncated = content.strip()[:3000]
-        if len(content.strip()) > 3000:
+        limit = 6000 if "readme" in rel_path.lower() else 4000
+        truncated = content.strip()[:limit]
+        if len(content.strip()) > limit:
             truncated += "\n... (truncated)"
         lines.append(truncated)
 
@@ -195,7 +222,14 @@ def analyze_repo(repo_url: str) -> str:
         if tree is None:
             tree = []
 
-        # Find which key files exist (root or nested); prefer root-level
+        # Build path lookup: lowercase -> original path
+        path_lookup: dict[str, str] = {}
+        for e in tree:
+            p = (e.get("path") or "").strip()
+            if p:
+                path_lookup[p.lower()] = p
+
+        # 1. Key config/docs files
         to_fetch: list[str] = []
         seen_lower: set[str] = set()
         for entry in tree:
@@ -210,8 +244,20 @@ def analyze_repo(repo_url: str) -> str:
                         to_fetch.append(path)
                     break
 
+        # 2. Source entry points and key modules for deeper understanding
+        for pattern in SOURCE_PATTERNS:
+            pl = pattern.lower()
+            for tree_key, orig in path_lookup.items():
+                if tree_key == pl or tree_key.endswith("/" + pl):
+                    if tree_key not in seen_lower:
+                        seen_lower.add(tree_key)
+                        to_fetch.append(orig)
+                    break
+
         file_contents: dict[str, str] = {}
-        for path in to_fetch[:15]:  # limit number of files
+        for path in to_fetch[:30]:  # deeper analysis: more files
+            if not path:
+                continue
             content = fetch_file_content(client, owner, repo, path, ref)
             if content:
                 file_contents[path] = content

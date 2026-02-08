@@ -80,6 +80,56 @@ const lightMindmapTheme = {
 export interface MermaidDiagramProps {
   code: string;
   className?: string;
+  is3D?: boolean;
+}
+
+/** Inject SVG filters and apply 3D depth effect to diagram nodes. */
+function apply3DEffect(svgEl: SVGSVGElement, isDark: boolean) {
+  const ns = "http://www.w3.org/2000/svg";
+  let defs = svgEl.querySelector("defs");
+  if (!defs) { defs = document.createElementNS(ns, "defs"); svgEl.prepend(defs); }
+  defs.querySelectorAll("[data-effect-3d]").forEach((el) => el.remove());
+
+  const filter = document.createElementNS(ns, "filter");
+  filter.setAttribute("id", "diagram-3d-shadow");
+  filter.setAttribute("x", "-12%"); filter.setAttribute("y", "-12%");
+  filter.setAttribute("width", "140%"); filter.setAttribute("height", "150%");
+  filter.setAttribute("data-effect-3d", "true");
+
+  const feBlur = document.createElementNS(ns, "feGaussianBlur");
+  feBlur.setAttribute("in", "SourceAlpha"); feBlur.setAttribute("stdDeviation", "4"); feBlur.setAttribute("result", "blur");
+  const feOffset = document.createElementNS(ns, "feOffset");
+  feOffset.setAttribute("in", "blur"); feOffset.setAttribute("dx", "3"); feOffset.setAttribute("dy", "5"); feOffset.setAttribute("result", "offsetBlur");
+  const feFlood = document.createElementNS(ns, "feFlood");
+  feFlood.setAttribute("flood-color", isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.15)"); feFlood.setAttribute("flood-opacity", "1"); feFlood.setAttribute("result", "color");
+  const feComp = document.createElementNS(ns, "feComposite");
+  feComp.setAttribute("in", "color"); feComp.setAttribute("in2", "offsetBlur"); feComp.setAttribute("operator", "in"); feComp.setAttribute("result", "shadow");
+  const feMerge = document.createElementNS(ns, "feMerge");
+  const mn1 = document.createElementNS(ns, "feMergeNode"); mn1.setAttribute("in", "shadow");
+  const mn2 = document.createElementNS(ns, "feMergeNode"); mn2.setAttribute("in", "SourceGraphic");
+  feMerge.appendChild(mn1); feMerge.appendChild(mn2);
+  filter.appendChild(feBlur); filter.appendChild(feOffset); filter.appendChild(feFlood); filter.appendChild(feComp); filter.appendChild(feMerge);
+  defs.appendChild(filter);
+
+  svgEl.querySelectorAll(
+    ".node rect, .node polygon, .node circle, .node ellipse, .node path, .cluster rect, .label-container rect, g.node > rect, g.node > polygon, g.node > circle"
+  ).forEach((s) => s.setAttribute("filter", "url(#diagram-3d-shadow)"));
+
+  svgEl.querySelectorAll("g[id]").forEach((g) => {
+    const id = g.getAttribute("id") || "";
+    if (id.startsWith("flowchart-") || id.startsWith("statediagram-") || /^[A-Za-z]+-?\d*$/.test(id)) {
+      g.querySelectorAll(":scope > rect, :scope > polygon, :scope > circle, :scope > ellipse").forEach((s) => {
+        if (!s.getAttribute("filter")) s.setAttribute("filter", "url(#diagram-3d-shadow)");
+      });
+    }
+  });
+  svgEl.classList.add("diagram-3d-active");
+}
+
+function remove3DEffect(svgEl: SVGSVGElement) {
+  svgEl.querySelectorAll("[data-effect-3d]").forEach((el) => el.remove());
+  svgEl.querySelectorAll("[filter='url(#diagram-3d-shadow)']").forEach((s) => s.removeAttribute("filter"));
+  svgEl.classList.remove("diagram-3d-active");
 }
 
 function isMindmap(code: string): boolean {
@@ -87,7 +137,7 @@ function isMindmap(code: string): boolean {
   return trimmed.startsWith("mindmap") || (trimmed.startsWith("---") && code.includes("mindmap"));
 }
 
-export function MermaidDiagram({ code, className = "" }: MermaidDiagramProps) {
+export function MermaidDiagram({ code, className = "", is3D = false }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const { theme } = useTheme();
@@ -112,7 +162,6 @@ export function MermaidDiagram({ code, className = "" }: MermaidDiagramProps) {
       .render(id, code)
       .then(({ svg, bindFunctions }) => {
         if (cancelled || !el) return;
-        // Wrap SVG so we can constrain and center it; scale diagram to fit viewport
         const wrapper = document.createElement("div");
         wrapper.className = "mermaid-diagram-fit";
         wrapper.style.cssText =
@@ -122,7 +171,6 @@ export function MermaidDiagram({ code, className = "" }: MermaidDiagramProps) {
         el.appendChild(wrapper);
         const svgEl = wrapper.querySelector("svg");
         if (svgEl) {
-          // Scale to fit: use max dimensions so diagram stays within window
           svgEl.style.maxWidth = "100%";
           svgEl.style.maxHeight = "100%";
           svgEl.style.width = "auto";
@@ -131,6 +179,7 @@ export function MermaidDiagram({ code, className = "" }: MermaidDiagramProps) {
             svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
           }
           if (mindmap) svgEl.classList.add("mermaid-mindmap-svg");
+          if (is3D) apply3DEffect(svgEl, theme === "dark");
         }
         bindFunctions?.(el);
       })
@@ -138,10 +187,16 @@ export function MermaidDiagram({ code, className = "" }: MermaidDiagramProps) {
         if (!cancelled) setError(err?.message ?? "Could not render diagram.");
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [code, theme, mindmap]);
+    return () => { cancelled = true; };
+  }, [code, theme, mindmap, is3D]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const svgEl = containerRef.current.querySelector("svg");
+    if (!svgEl) return;
+    if (is3D) apply3DEffect(svgEl, theme === "dark");
+    else remove3DEffect(svgEl);
+  }, [is3D, theme]);
 
   if (!code.trim()) return null;
 

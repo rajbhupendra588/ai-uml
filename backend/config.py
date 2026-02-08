@@ -35,6 +35,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Validation
 MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "2000"))
+# Repo analysis needs more context; default 25k chars
+REPO_ANALYSIS_MAX_LENGTH = int(os.getenv("REPO_ANALYSIS_MAX_LENGTH", "25000"))
 
 # GitHub OAuth (optional; if not set, Sign in with GitHub is hidden or disabled)
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "").strip()

@@ -1,10 +1,14 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Github, Globe, RefreshCw, ChevronRight, Search, FolderGit2, ArrowRight, X } from "lucide-react";
 import { getGithubUserReposUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+const GITHUB_REPOS_STORAGE_KEY = "architect_github_repos";
+const GITHUB_USERNAMES_STORAGE_KEY = "architect_github_usernames";
+const MAX_RECENT_USERNAMES = 5;
 
 interface GitHubRepo {
   id: number;
@@ -20,12 +24,37 @@ interface GitHubReposPanelProps {
   onSelectRepo: (repoUrl: string) => void;
   isLoading?: boolean;
   onClose?: () => void;
+  /** When this increments (e.g. New diagram), clear cached repos. */
+  newDiagramCount?: number;
+}
+
+function loadRecentUsernames(): string[] {
+  try {
+    const s = localStorage.getItem(GITHUB_USERNAMES_STORAGE_KEY);
+    if (!s) return [];
+    const parsed = JSON.parse(s);
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT_USERNAMES) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentUsername(username: string): void {
+  const recent = loadRecentUsernames();
+  const filtered = recent.filter((u) => u.toLowerCase() !== username.toLowerCase());
+  const updated = [username, ...filtered].slice(0, MAX_RECENT_USERNAMES);
+  try {
+    localStorage.setItem(GITHUB_USERNAMES_STORAGE_KEY, JSON.stringify(updated));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function GitHubReposPanel({
   onSelectRepo,
   isLoading = false,
   onClose,
+  newDiagramCount = 0,
 }: GitHubReposPanelProps) {
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -33,8 +62,40 @@ export function GitHubReposPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [githubInput, setGithubInput] = useState("");
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [recentUsernames, setRecentUsernames] = useState<string[]>([]);
 
   // Extract username from GitHub URL or use as-is
+  // Load persisted repos and recent usernames on mount
+  useEffect(() => {
+    setRecentUsernames(loadRecentUsernames());
+    try {
+      const s = localStorage.getItem(GITHUB_REPOS_STORAGE_KEY);
+      if (!s) return;
+      const data = JSON.parse(s) as { repos?: GitHubRepo[]; currentUser?: string };
+      if (Array.isArray(data.repos) && data.repos.length > 0) {
+        setRepos(data.repos);
+        if (typeof data.currentUser === "string") setCurrentUser(data.currentUser);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Clear repos when New diagram is clicked
+  useEffect(() => {
+    if (newDiagramCount > 0) {
+      setRepos([]);
+      setCurrentUser(null);
+      setError(null);
+      setSearchQuery("");
+      try {
+        localStorage.removeItem(GITHUB_REPOS_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [newDiagramCount]);
+
   const extractUsername = (input: string): string | null => {
     const trimmed = input.trim();
     if (!trimmed) return null;
@@ -55,15 +116,27 @@ export function GitHubReposPanel({
     try {
       const res = await fetch(getGithubUserReposUrl(username));
       const data = await res.json();
-      
+
       if (!res.ok) {
         const message = data.detail || "Failed to fetch repositories";
         throw new Error(message);
       }
-      
-      setRepos(data.repos || []);
-      setCurrentUser(data.username || username);
-      if ((data.repos || []).length === 0) {
+
+      const reposList = data.repos || [];
+      const user = data.username || username;
+      setRepos(reposList);
+      setCurrentUser(user);
+      saveRecentUsername(user);
+      setRecentUsernames(loadRecentUsernames());
+      try {
+        localStorage.setItem(
+          GITHUB_REPOS_STORAGE_KEY,
+          JSON.stringify({ repos: reposList, currentUser: user })
+        );
+      } catch {
+        /* ignore */
+      }
+      if (reposList.length === 0) {
         toast.info(`No public repos found for ${username}`);
       }
     } catch (err) {
@@ -149,6 +222,25 @@ export function GitHubReposPanel({
             )}
           </button>
         </div>
+        {recentUsernames.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="text-[10px] text-[var(--muted)] self-center">Recent:</span>
+            {recentUsernames.map((u) => (
+              <button
+                key={u}
+                type="button"
+                onClick={() => {
+                  setGithubInput(u);
+                  fetchRepos(u);
+                }}
+                disabled={loading}
+                className="rounded-full border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1 text-xs text-[var(--foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)] disabled:opacity-50 transition"
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+        )}
       </form>
 
       {/* Current user info & search */}

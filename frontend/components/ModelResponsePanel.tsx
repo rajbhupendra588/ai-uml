@@ -10,8 +10,10 @@ export interface ModelResponse {
   explanation?: string;
   /** Set when diagram was generated from a repo; URL of the repository. */
   repo_url?: string;
-  /** Set when diagram was generated from a repo; detailed analysis used for generation. */
+  /** Set when diagram was generated from a repo; LLM-generated detailed analysis. */
   repo_explanation?: string;
+  /** Set when diagram was generated from a repo; formatted diagram plan. */
+  diagram_plan_summary?: string;
 }
 
 interface ModelResponsePanelProps {
@@ -94,7 +96,7 @@ export function ModelResponsePanel({ response, className }: ModelResponsePanelPr
                 {response.repo_explanation && (
                   <section>
                     <div className="flex items-center gap-1.5 text-[var(--primary)]">
-                      <span className="text-xs font-semibold uppercase tracking-wider">About this repository</span>
+                      <span className="text-xs font-semibold uppercase tracking-wider">Repository Analysis</span>
                     </div>
                     {response.repo_url && (
                       <a
@@ -109,6 +111,18 @@ export function ModelResponsePanel({ response, className }: ModelResponsePanelPr
                     <div className="mt-1.5 max-h-48 overflow-y-auto rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
                       <pre className="text-xs text-[var(--foreground)] leading-relaxed whitespace-pre-wrap font-sans">
                         {response.repo_explanation}
+                      </pre>
+                    </div>
+                  </section>
+                )}
+                {response.diagram_plan_summary && (
+                  <section>
+                    <div className="flex items-center gap-1.5 text-[var(--primary)]">
+                      <span className="text-xs font-semibold uppercase tracking-wider">Diagram Plan</span>
+                    </div>
+                    <div className="mt-1.5 max-h-40 overflow-y-auto rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
+                      <pre className="text-xs text-[var(--foreground)] leading-relaxed whitespace-pre-wrap font-sans">
+                        {response.diagram_plan_summary}
                       </pre>
                     </div>
                   </section>
