@@ -310,7 +310,7 @@ export function SideKick({
 
       {/* ---- Chat tab: Messages / Welcome ---- */}
       <div className={cn("flex-1 overflow-y-auto p-4 space-y-3", activeTab !== "chat" && "hidden")}>
-        {diagramType === "hld" && diagramPlan?.layers && onGenerateLld && (
+        {diagramType === "hld" && diagramPlan?.layers && onGenerateLld ? (
           <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] overflow-hidden">
             <HldComponentsPanel
               diagramPlan={diagramPlan}
@@ -319,7 +319,7 @@ export function SideKick({
               isLoading={isLoading}
             />
           </div>
-        )}
+        ) : null}
         {!hasMessages && !pendingPlan ? (
           /* ---- Welcome empty state ---- */
           <div className="flex h-full flex-col items-center justify-center text-center px-2">
