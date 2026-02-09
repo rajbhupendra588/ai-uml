@@ -25,7 +25,9 @@ else:
     # Development: explicit localhost so credentials (cookies, X-Session-Token) work
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
+        "http://localhost:3001",
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
     ]
 
 # API
@@ -38,9 +40,12 @@ MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "16000"))
 # Repo analysis needs more context; default 25k chars
 REPO_ANALYSIS_MAX_LENGTH = int(os.getenv("REPO_ANALYSIS_MAX_LENGTH", "25000"))
 
-# GitHub OAuth (optional; if not set, Sign in with GitHub is hidden or disabled)
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "").strip()
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "").strip()
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./architectai.db")
+
+# GitHub OAuth
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")

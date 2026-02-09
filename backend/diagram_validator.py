@@ -139,88 +139,6 @@ def validate_hld(plan: dict) -> ValidationResult:
     return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
 
 
-# --- LLD ---
-def validate_lld(plan: dict) -> ValidationResult:
-    """Validate LLD plan: modules with classes/interfaces, dependencies (from/to must reference module names)."""
-    errors: list[str] = []
-    modules = _ensure_list(plan, "modules")
-    dependencies = _ensure_list(plan, "dependencies")
-
-    module_names = set()
-    repaired_modules = []
-    for i, mod in enumerate(modules):
-        if not isinstance(mod, dict):
-            continue
-        name = (mod.get("name") or "").strip() or f"Module_{i}"
-        name = name[:50]
-        module_names.add(name)
-        classes = _ensure_list(mod, "classes")
-        interfaces = _ensure_list(mod, "interfaces")
-        repaired_classes = []
-        for j, c in enumerate(classes):
-            if isinstance(c, dict):
-                cn = (c.get("name") or "").strip() or f"Class_{j}"
-                attrs = c.get("attributes")
-                attrs = (attrs[:8] if isinstance(attrs, list) else [])
-                methods = c.get("methods")
-                methods = (methods[:8] if isinstance(methods, list) else [])
-                repaired_classes.append({
-                    "name": cn[:50],
-                    "attributes": [str(a)[:60] for a in attrs],
-                    "methods": [str(m)[:60] for m in methods],
-                })
-        repaired_interfaces = []
-        for k, iface in enumerate(interfaces):
-            if isinstance(iface, dict):
-                iname = (iface.get("name") or "").strip() or f"I_{k}"
-                imethods = iface.get("methods")
-                imethods = (imethods[:8] if isinstance(imethods, list) else [])
-                repaired_interfaces.append({
-                    "name": iname[:50],
-                    "methods": [str(m)[:60] for m in imethods],
-                })
-        repaired_modules.append({
-            "name": name,
-            "classes": repaired_classes,
-            "interfaces": repaired_interfaces,
-        })
-
-    if not repaired_modules:
-        errors.append("No valid modules")
-        repaired_modules = [
-            {
-                "name": "ExampleModule",
-                "classes": [{"name": "Example", "attributes": ["id: string"], "methods": ["doSomething()"]}],
-                "interfaces": [],
-            }
-        ]
-        module_names = {"ExampleModule"}
-
-    repaired_deps = []
-    for d in dependencies:
-        if not isinstance(d, dict):
-            continue
-        fr = (d.get("from") or "").strip()[:50]
-        to = (d.get("to") or "").strip()[:50]
-        if fr in module_names and to in module_names:
-            dtype = (d.get("type") or "uses").strip().lower()
-            if dtype not in CLASS_RELATIONSHIP_TYPES:
-                dtype = "uses"
-            repaired_deps.append({
-                "from": fr,
-                "to": to,
-                "type": dtype,
-                "label": (d.get("label") or "")[:40],
-            })
-
-    # Bounds: 2–15 modules
-    if len(repaired_modules) > 15:
-        repaired_modules = repaired_modules[:15]
-        module_names = {m["name"] for m in repaired_modules}
-        repaired_deps = [d for d in repaired_deps if d["from"] in module_names and d["to"] in module_names]
-
-    repaired = {"type": "lld", "modules": repaired_modules, "dependencies": repaired_deps}
-    return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
 
 
 # --- Class ---
@@ -585,67 +503,6 @@ def validate_component(plan: dict) -> ValidationResult:
     return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
 
 
-# --- Mind tree ---
-def validate_mindtree(plan: dict) -> ValidationResult:
-    """Validate mind tree plan: nodes with id, label, parentId; exactly one root; parentId references valid ids."""
-    errors: list[str] = []
-    nodes = _ensure_list(plan, "nodes")
-
-    node_ids = set()
-    repaired_nodes = []
-    root_count = 0
-    for i, n in enumerate(nodes):
-        if not isinstance(n, dict):
-            continue
-        nid = (n.get("id") or f"n{i}").strip()[:30]
-        if not nid:
-            nid = f"n{i}"
-        node_ids.add(nid)
-        parent_id = n.get("parentId")
-        if parent_id is None:
-            root_count += 1
-        repaired_nodes.append({
-            "id": nid,
-            "label": (n.get("label") or nid)[:60],
-            "parentId": parent_id if parent_id is None else (str(parent_id).strip()[:30] if parent_id else None),
-        })
-
-    if not repaired_nodes:
-        errors.append("No valid nodes")
-        repaired_nodes = [
-            {"id": "n0", "label": "Central Idea", "parentId": None},
-            {"id": "n1", "label": "Branch", "parentId": "n0"},
-        ]
-        node_ids = {"n0", "n1"}
-        root_count = 1
-
-    # Ensure exactly one root
-    if root_count == 0:
-        repaired_nodes[0]["parentId"] = None
-        root_count = 1
-    elif root_count > 1:
-        for r in repaired_nodes:
-            if r["parentId"] is None and r["id"] != repaired_nodes[0]["id"]:
-                r["parentId"] = repaired_nodes[0]["id"]
-                root_count -= 1
-                if root_count <= 1:
-                    break
-
-    # Fix invalid parentId references (point to root)
-    root_id = next((n["id"] for n in repaired_nodes if n.get("parentId") is None), repaired_nodes[0]["id"] if repaired_nodes else None)
-    for r in repaired_nodes:
-        pid = r.get("parentId")
-        if pid is not None and pid not in node_ids:
-            r["parentId"] = root_id
-
-    # Bounds: 2–25 nodes
-    if len(repaired_nodes) > 25:
-        repaired_nodes = repaired_nodes[:25]
-        node_ids = {n["id"] for n in repaired_nodes}
-        errors.append("Trimmed nodes to 25")
-
-    repaired = {"nodes": repaired_nodes}
-    return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
 
 
 # --- Deployment ---
@@ -718,27 +575,77 @@ def validate_deployment(plan: dict) -> ValidationResult:
     for j, conn in enumerate(repaired_conns):
         conn["order"] = j + 1
 
-    repaired = {
-        "nodes": repaired_nodes,
-        "artifacts": repaired_artifacts,
-        "connections": repaired_conns,
-        "explanation": (plan.get("explanation") or "").strip()[:500],
-    }
     return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
+
+
+# --- Mindtree ---
+def validate_mindtree(plan: dict) -> ValidationResult:
+    """Validate mindtree diagram: rootId and nodes list (id, label, parentId)."""
+    errors: list[str] = []
+    root_id = (plan.get("rootId") or "").strip()
+    nodes = _ensure_list(plan, "nodes")
+
+    repaired_nodes = []
+    node_ids = set()
+    
+    # First pass: collect IDs and repair nodes
+    for i, n in enumerate(nodes):
+        if not isinstance(n, dict):
+            continue
+        nid = (n.get("id") or f"n{i}").strip()[:30]
+        if not nid:
+            nid = f"n{i}"
+        node_ids.add(nid)
+        repaired_nodes.append({
+            "id": nid,
+            "label": (n.get("label") or nid)[:50],
+            "parentId": (n.get("parentId") or "").strip()[:30]
+        })
+
+    # Ensure root exists
+    if not root_id or root_id not in node_ids:
+        if repaired_nodes:
+            # Pick first node as root if current root invalid
+            root_id = repaired_nodes[0]["id"]
+            repaired_nodes[0]["parentId"] = "" # Root has no parent
+        else:
+            root_id = "root"
+            repaired_nodes = [{"id": "root", "label": "Central Topic", "parentId": ""}]
+            node_ids = {"root"}
+
+    # Second pass: validate parentIds
+    final_nodes = []
+    for n in repaired_nodes:
+        pid = n["parentId"]
+        if pid and pid not in node_ids:
+            # If parent missing, attach to root (unless it's root itself)
+            if n["id"] != root_id:
+                n["parentId"] = root_id
+        elif n["id"] == root_id:
+             n["parentId"] = ""
+        final_nodes.append(n)
+
+    repaired = {"rootId": root_id, "nodes": final_nodes}
+    return ValidationResult(is_valid=len(errors) == 0, errors=errors, repaired=repaired if errors else None)
+
+
+# --- Flowchart ---
+# Reuse activity validator since structure is identical (nodes + edges)
+validate_flowchart = validate_activity
 
 
 _VALIDATORS = {
     "architecture": validate_architecture,
     "hld": validate_hld,
-    "lld": validate_lld,
-    "mindtree": validate_mindtree,
     "class": validate_class,
     "sequence": validate_sequence,
     "usecase": validate_usecase,
     "activity": validate_activity,
+    "flowchart": validate_flowchart,
     "state": validate_state,
     "component": validate_component,
     "deployment": validate_deployment,
+    "mindtree": validate_mindtree,
 }
 
 

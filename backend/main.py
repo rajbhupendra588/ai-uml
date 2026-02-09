@@ -7,26 +7,48 @@ from contextlib import asynccontextmanager
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from asgi_correlation_id import CorrelationIdMiddleware, CorrelationIdFilter
 
-from config import API_BASE_URL, CORS_ORIGINS, API_V1_PREFIX, ENVIRONMENT, FRONTEND_URL, LOG_LEVEL, MAX_PROMPT_LENGTH, REPO_ANALYSIS_MAX_LENGTH, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+from config import API_BASE_URL, CORS_ORIGINS, API_V1_PREFIX, ENVIRONMENT, FRONTEND_URL, LOG_LEVEL, MAX_PROMPT_LENGTH, REPO_ANALYSIS_MAX_LENGTH
+from database import get_db
+from auth import get_current_user_from_request
 
 # --- Structured logging ---
+cid_filter = CorrelationIdFilter(uuid_length=8, default_value="-")
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.addFilter(cid_filter)
+
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    format="%(asctime)s | %(levelname)s | [%(correlation_id)s] | %(name)s | %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%SZ",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[console_handler],
 )
 logger = logging.getLogger("architectai")
+
+# --- Rate limiting ---
+limiter = Limiter(key_func=get_remote_address)
+
+from database import init_db
+from routers import auth, diagrams
 
 # --- App ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize DB (create tables if needed)
+    try:
+        await init_db()
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        
     logger.info("ArchitectAI API starting", extra={"environment": ENVIRONMENT})
     yield
     logger.info("ArchitectAI API shutting down")
@@ -40,6 +62,11 @@ app = FastAPI(
     docs_url="/docs" if ENVIRONMENT != "production" else None,
     redoc_url="/redoc" if ENVIRONMENT != "production" else None,
 )
+app.add_middleware(CorrelationIdMiddleware)
+app.include_router(auth.router, prefix=f"{API_V1_PREFIX}/auth", tags=["auth"])
+app.include_router(diagrams.router, prefix=f"{API_V1_PREFIX}/diagrams", tags=["diagrams"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 def _cors_headers(request: Request) -> dict:
@@ -50,7 +77,7 @@ def _cors_headers(request: Request) -> dict:
         "Access-Control-Allow-Origin": allow_origin,
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS, PUT, DELETE",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Session-Token",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Request-ID",
     }
 
 
@@ -140,10 +167,6 @@ class GenerateFromPlanRequest(BaseModel):
     diagram_type: DiagramType = Field(..., description="Same diagram_type used for /plan")
 
 
-class ExportRequest(BaseModel):
-    diagram_plan: dict = Field(..., description="Plan from POST /api/v1/plan or generate result")
-    diagram_type: DiagramType = Field(..., description="Diagram type")
-    tool: str = Field(default="drawio", description="Export target: drawio")
 
 
 # --- Health ---
@@ -177,34 +200,48 @@ def list_diagram_types():
 
 @app.get(f"{API_V1_PREFIX}/models")
 def list_models():
-    from models import AVAILABLE_MODELS, DEFAULT_MODEL_ID
+    from llm_models import AVAILABLE_MODELS, DEFAULT_MODEL_ID
     return {"models": AVAILABLE_MODELS, "default": DEFAULT_MODEL_ID}
 
 
 @app.post(f"{API_V1_PREFIX}/generate")
-def generate_diagram(request: PromptRequest):
+@limiter.limit("5/minute")
+async def generate_diagram(
+    request: Request,
+    body: PromptRequest,
+    db=Depends(get_db),
+    current_user=Depends(get_current_user_from_request),
+):
     import time
     from agent import run_agent
+    from usage import check_and_increment_usage
+
+    # Usage limit for authenticated users
+    if current_user:
+        await check_and_increment_usage(db, current_user)
+
     try:
         logger.info(
             "generate_request",
-            extra={"prompt_length": len(request.prompt), "diagram_type": request.diagram_type, "model": request.model or "default"},
+            extra={"prompt_length": len(body.prompt), "diagram_type": body.diagram_type, "model": body.model or "default"},
         )
         start = time.perf_counter()
-        result = run_agent(request.prompt, request.diagram_type, request.model)
+        result = run_agent(body.prompt, body.diagram_type, body.model)
         duration_ms = round((time.perf_counter() - start) * 1000)
         logger.info(
             "generate_success",
             extra={
-                "diagram_type": request.diagram_type,
+                "diagram_type": body.diagram_type,
                 "duration_ms": duration_ms,
                 "has_mermaid": bool(result.get("mermaid")),
                 "versions_count": len(result.get("versions") or []),
             },
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("generate_error", extra={"diagram_type": getattr(request, "diagram_type", None)})
+        logger.exception("generate_error", extra={"diagram_type": getattr(body, "diagram_type", None)})
         detail = "Diagram generation failed. Please try again."
         if ENVIRONMENT == "development":
             detail = f"{detail} ({type(e).__name__}: {str(e)[:200]})"
@@ -213,76 +250,49 @@ def generate_diagram(request: PromptRequest):
 
 # Legacy route for backward compatibility
 @app.post("/generate")
-def generate_diagram_legacy(request: PromptRequest):
-    return generate_diagram(request)
+@limiter.limit("5/minute")
+async def generate_diagram_legacy(
+    request: Request,
+    body: PromptRequest,
+    db=Depends(get_db),
+    current_user=Depends(get_current_user_from_request),
+):
+    return await generate_diagram(request, body, db, current_user)
 
 
 @app.post(f"{API_V1_PREFIX}/plan")
-def get_plan(request: PromptRequest):
+@limiter.limit("5/minute")
+def get_plan(request: Request, body: PromptRequest):
     """Return only the diagram plan (no diagram yet). Use for multi-step: show plan → user confirms → POST to /generate-from-plan."""
     from agent import run_plan_only
     try:
-        plan = run_plan_only(request.prompt, request.diagram_type, request.model)
-        return {"diagram_plan": plan, "diagram_type": request.diagram_type}
+        plan = run_plan_only(body.prompt, body.diagram_type, body.model)
+        return {"diagram_plan": plan, "diagram_type": body.diagram_type}
     except Exception as e:
-        logger.exception("plan_error", extra={"diagram_type": request.diagram_type})
+        logger.exception("plan_error", extra={"diagram_type": body.diagram_type})
         raise HTTPException(status_code=500, detail="Plan generation failed. Please try again.")
 
 
 @app.post(f"{API_V1_PREFIX}/generate-from-plan")
-def generate_diagram_from_plan(request: GenerateFromPlanRequest):
+@limiter.limit("5/minute")
+def generate_diagram_from_plan(request: Request, body: GenerateFromPlanRequest):
     """Generate diagram from an existing plan (e.g. after user confirmed plan from /plan). No LLM call."""
     from agent import run_generator_from_plan
     from diagram_validator import get_valid_plan
     try:
-        plan = get_valid_plan(request.diagram_type, request.diagram_plan)
-        result = run_generator_from_plan(plan, request.diagram_type)
+        plan = get_valid_plan(body.diagram_type, body.diagram_plan)
+        result = run_generator_from_plan(plan, body.diagram_type)
         return result
     except Exception as e:
-        logger.exception("generate_from_plan_error", extra={"diagram_type": request.diagram_type})
+        logger.exception("generate_from_plan_error", extra={"diagram_type": body.diagram_type})
         raise HTTPException(status_code=500, detail="Diagram generation from plan failed. Please try again.")
 
 
-@app.post(f"{API_V1_PREFIX}/export")
-def export_diagram(request: ExportRequest):
-    """
-    Export diagram to tool-native format (Draw.io, etc.).
-    Converts plan → IR → validate → tool-specific output. Editable in target tool.
-    """
-    from diagram_validator import get_valid_plan
-    from diagram_ir import plan_to_ir, validate_ir
-    from renderers.drawio import ir_to_drawio
-    try:
-        plan = get_valid_plan(request.diagram_type, request.diagram_plan)
-        ir = plan_to_ir(request.diagram_type, plan)
-        is_valid, errors = validate_ir(ir)
-        if not is_valid:
-            logger.warning("export_ir_validation_failed", extra={"errors": errors[:5]})
-            # Repair: filter invalid edges and continue (no orphan connectors)
-            ir["edges"] = [
-                e for e in ir.get("edges", [])
-                if e.get("from") in {n.get("id") for n in ir.get("nodes", [])}
-                and e.get("to") in {n.get("id") for n in ir.get("nodes", [])}
-            ]
-        tool = "drawio" if request.tool in ("drawio", "draw.io") else "drawio"
-        if tool == "drawio":
-            content = ir_to_drawio(ir)
-            return {
-                "content": content,
-                "format": "drawio",
-                "filename": f"{request.diagram_type}-diagram.drawio",
-                "mime_type": "application/xml",
-            }
-        raise HTTPException(status_code=400, detail=f"Unsupported export tool: {request.tool}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("export_error", extra={"diagram_type": request.diagram_type, "tool": request.tool})
-        raise HTTPException(status_code=500, detail="Export failed. Please try again.")
 
 
 @app.post(f"{API_V1_PREFIX}/generate-from-repo")
-def generate_diagram_from_repo(request: GenerateFromRepoRequest):
+@limiter.limit("5/minute")
+def generate_diagram_from_repo(request: Request, body: GenerateFromRepoRequest):
     """
     Deep-analyze a GitHub repo and generate the chosen diagram type.
     Flow: 1) Deep repo analysis, 2) LLM repo explanation, 3) Diagram plan, 4) Diagram.
@@ -294,12 +304,12 @@ def generate_diagram_from_repo(request: GenerateFromRepoRequest):
     try:
         logger.info(
             "generate_from_repo",
-            extra={"repo_url": request.repo_url[:80], "diagram_type": request.diagram_type, "model": request.model},
+            extra={"repo_url": body.repo_url[:80], "diagram_type": body.diagram_type, "model": body.model},
         )
-        raw_summary = analyze_repo(request.repo_url.strip())
+        raw_summary = analyze_repo(body.repo_url.strip())
         if len(raw_summary) > REPO_ANALYSIS_MAX_LENGTH:
             raw_summary = raw_summary[:REPO_ANALYSIS_MAX_LENGTH] + "\n... (truncated for analysis)"
-        repo_explanation = generate_repo_explanation(raw_summary, request.model)
+        repo_explanation = generate_repo_explanation(raw_summary, body.model)
         # Strict prompt: prevent hallucinating AWS/Stripe/etc. not in the repo
         repo_prompt = (
             "CRITICAL - Repository analysis mode: Extract ONLY components that are explicitly "
@@ -313,12 +323,12 @@ def generate_diagram_from_repo(request: GenerateFromRepoRequest):
                 "in the diagram—each app and shared package. Do not merge or omit projects."
             )
         repo_prompt += "\n\n" + raw_summary
-        result = run_agent(repo_prompt, request.diagram_type, request.model)
-        result["repo_url"] = request.repo_url.strip()
+        result = run_agent(repo_prompt, body.diagram_type, body.model)
+        result["repo_url"] = body.repo_url.strip()
         result["repo_explanation"] = repo_explanation
         diagram_plan = result.get("diagram_plan")
         if diagram_plan:
-            result["diagram_plan_summary"] = format_plan_for_display(diagram_plan, request.diagram_type)
+            result["diagram_plan_summary"] = format_plan_for_display(diagram_plan, body.diagram_type)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -348,115 +358,13 @@ def generate_diagram_from_repo(request: GenerateFromRepoRequest):
         )
 
 
-# --- GitHub Auth (optional) ---
-from auth import (
-    COOKIE_MAX_AGE,
-    COOKIE_NAME,
-    create_session,
-    destroy_session,
-    exchange_code_for_token,
-    get_github_authorize_url,
-    get_login_from_request,
-    get_access_token_from_request,
-    is_github_oauth_configured,
-    sign_session_id,
-)
-
-
-@app.get(f"{API_V1_PREFIX}/auth/github")
-def auth_github_redirect():
-    """Redirect to GitHub OAuth. Only works if GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are set."""
-    if not is_github_oauth_configured():
-        raise HTTPException(status_code=501, detail="GitHub OAuth is not configured.")
-    redirect_uri = f"{API_BASE_URL}/api/v1/auth/github/callback"
-    url = get_github_authorize_url(redirect_uri)
-    return RedirectResponse(url=url)
-
-
-@app.get(f"{API_V1_PREFIX}/auth/github/callback")
-async def auth_github_callback(code: str | None = None, state: str | None = None, error: str | None = None):
-    if error or not code:
-        return RedirectResponse(url=f"{FRONTEND_URL}?auth_error=1")
-    if not is_github_oauth_configured():
-        return RedirectResponse(url=FRONTEND_URL)
-    redirect_uri = f"{API_BASE_URL}/api/v1/auth/github/callback"
-    try:
-        token_res = await exchange_code_for_token(code, redirect_uri)
-    except Exception:
-        logger.exception("github_oauth_token_exchange")
-        return RedirectResponse(url=f"{FRONTEND_URL}?auth_error=1")
-    access_token = token_res.get("access_token")
-    if not access_token:
-        return RedirectResponse(url=f"{FRONTEND_URL}?auth_error=1")
-    session_id = create_session(access_token)
-    signed = sign_session_id(session_id)
-    # Redirect with fragment so frontend (cross-origin) can store session token
-    return RedirectResponse(url=f"{FRONTEND_URL}#session={signed}")
-
-
-@app.get(f"{API_V1_PREFIX}/auth/config")
-def auth_config():
-    """Return whether GitHub OAuth is available (so frontend can show/hide Sign in)."""
-    return {"github_oauth_enabled": is_github_oauth_configured()}
-
-
-@app.get(f"{API_V1_PREFIX}/auth/me")
-def auth_me(request: Request):
-    """Return current user if logged in via GitHub (cookie or X-Session-Token)."""
-    cookie = request.cookies.get(COOKIE_NAME)
-    header_token = request.headers.get("X-Session-Token")
-    login = get_login_from_request(cookie, header_token)
-    if not login:
-        return {"logged_in": False}
-    return {"logged_in": True, "login": login}
-
-
-@app.post(f"{API_V1_PREFIX}/auth/logout")
-def auth_logout(request: Request):
-    """Clear session. Accepts cookie or X-Session-Token."""
-    cookie = request.cookies.get(COOKIE_NAME)
-    header_token = request.headers.get("X-Session-Token")
-    from auth import SERIALIZER
-    for raw in (cookie, header_token):
-        if not raw:
-            continue
-        try:
-            session_id = SERIALIZER.loads(raw, max_age=COOKIE_MAX_AGE)
-            destroy_session(session_id)
-        except Exception:
-            pass
-    from fastapi.responses import JSONResponse
-    return JSONResponse(content={"ok": True})
-
-
-@app.get(f"{API_V1_PREFIX}/github/repos")
-def github_repos(request: Request):
-    """List repos for the authenticated user. Requires GitHub OAuth login."""
-    cookie = request.cookies.get(COOKIE_NAME)
-    header_token = request.headers.get("X-Session-Token")
-    token = get_access_token_from_request(cookie, header_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Not logged in. Sign in with GitHub first.")
-    import httpx
-    with httpx.Client() as client:
-        r = client.get(
-            "https://api.github.com/user/repos",
-            params={"per_page": 100, "sort": "updated", "type": "all"},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
-            timeout=15.0,
-        )
-        if r.status_code != 200:
-            raise HTTPException(status_code=502, detail="Failed to fetch repos from GitHub.")
-        data = r.json()
-    repos = [
-        {"id": repo.get("id"), "name": repo.get("name"), "full_name": repo.get("full_name"), "html_url": repo.get("html_url"), "private": repo.get("private", False)}
-        for repo in data
-    ]
-    return {"repos": repos}
+# --- GitHub Public Repos (no auth required) ---
+# Note: Private repo access via OAuth has been removed to simplify the codebase
 
 
 @app.get(f"{API_V1_PREFIX}/github/users/{{username}}/repos")
-def github_user_public_repos(username: str):
+@limiter.limit("30/minute")
+def github_user_public_repos(request: Request, username: str):
     """List public repos for any GitHub user (no auth required)."""
     import httpx
     import re
@@ -467,14 +375,10 @@ def github_user_public_repos(username: str):
         raise HTTPException(status_code=400, detail="Invalid GitHub username format.")
     
     headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "ArchitectAI-App"}
-    # Use GITHUB_TOKEN if available (highest rate limit), else fall back to OAuth credentials
+    # Use GITHUB_TOKEN if available (highest rate limit), else unauthenticated (lower limit)
     github_token = os.getenv("GITHUB_TOKEN")
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
-    elif GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET:
-        import base64
-        auth = base64.b64encode(f"{GITHUB_CLIENT_ID}:{GITHUB_CLIENT_SECRET}".encode()).decode()
-        headers["Authorization"] = f"Basic {auth}"
     
     with httpx.Client() as client:
         r = client.get(

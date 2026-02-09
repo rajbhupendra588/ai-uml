@@ -24,10 +24,6 @@ export function getGenerateFromPlanUrl(): string {
   return `${getApiBaseUrl()}/api/v1/generate-from-plan`;
 }
 
-export function getExportUrl(): string {
-  return `${getApiBaseUrl()}/api/v1/export`;
-}
-
 export function getHealthUrl(): string {
   return `${getApiBaseUrl()}/health`;
 }
@@ -40,24 +36,32 @@ export function getModelsUrl(): string {
   return `${getApiBaseUrl()}/api/v1/models`;
 }
 
-export function getAuthConfigUrl(): string {
-  return `${getApiBaseUrl()}/api/v1/auth/config`;
+export function getAuthLoginUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/auth/login`;
+}
+
+export function getAuthRegisterUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/auth/register`;
 }
 
 export function getAuthMeUrl(): string {
   return `${getApiBaseUrl()}/api/v1/auth/me`;
 }
 
-export function getAuthGithubUrl(): string {
-  return `${getApiBaseUrl()}/api/v1/auth/github`;
+export function getGithubAuthorizeUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/auth/github/authorize`;
 }
 
-export function getAuthLogoutUrl(): string {
-  return `${getApiBaseUrl()}/api/v1/auth/logout`;
+export function getGithubCallbackUrl(code: string): string {
+  return `${getApiBaseUrl()}/api/v1/auth/github/callback?code=${encodeURIComponent(code)}`;
 }
 
-export function getGithubReposUrl(): string {
-  return `${getApiBaseUrl()}/api/v1/github/repos`;
+export function getDiagramsUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/diagrams`;
+}
+
+export function getDiagramUrl(id: number): string {
+  return `${getApiBaseUrl()}/api/v1/diagrams/${id}`;
 }
 
 export function getGithubUserReposUrl(username: string): string {
@@ -89,22 +93,21 @@ export const DEFAULT_MODELS: ModelOption[] = [
 export type DiagramType =
   | "architecture"
   | "hld"
-  | "lld"
-  | "mindtree"
   | "class"
   | "sequence"
   | "usecase"
   | "activity"
   | "state"
   | "component"
-  | "deployment";
+  | "deployment"
+  | "flowchart"
+  | "mindtree"
+  | "chat";
 
 /** All diagram types accepted by the API. Use when sending diagram_type to avoid 422. */
 export const VALID_DIAGRAM_TYPES: readonly DiagramType[] = [
   "architecture",
   "hld",
-  "lld",
-  "mindtree",
   "class",
   "sequence",
   "usecase",
@@ -112,10 +115,14 @@ export const VALID_DIAGRAM_TYPES: readonly DiagramType[] = [
   "state",
   "component",
   "deployment",
+  "flowchart",
+  "mindtree",
+  "chat",
 ] as const;
 
 export function toValidDiagramType(value: string): DiagramType {
-  return (VALID_DIAGRAM_TYPES as readonly string[]).includes(value)
+  // @ts-ignore - architecture is always valid fallback
+  return VALID_DIAGRAM_TYPES.includes(value as DiagramType)
     ? (value as DiagramType)
     : "architecture";
 }
@@ -123,8 +130,6 @@ export function toValidDiagramType(value: string): DiagramType {
 export const DIAGRAM_TYPE_LABELS: Record<DiagramType, string> = {
   architecture: "Architecture",
   hld: "HLD (High-Level Design)",
-  lld: "LLD (Low-Level Design)",
-  mindtree: "Mind Tree / Mind Map",
   class: "Class",
   sequence: "Sequence",
   usecase: "Use Case",
@@ -132,4 +137,7 @@ export const DIAGRAM_TYPE_LABELS: Record<DiagramType, string> = {
   state: "State",
   component: "Component",
   deployment: "Deployment",
+  flowchart: "Flowchart",
+  mindtree: "Mind Map",
+  chat: "Chat (Any Mermaid)",
 };

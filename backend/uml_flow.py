@@ -79,6 +79,21 @@ Return ONLY valid JSON with this exact structure:
 }
 Rules: Exactly one start and one end. "from" and "to" MUST be node ids. Edges MUST have "order": 1, 2, 3... in flow order. Keep all labels SHORT (2-5 words). Use 4-12 nodes."""
 
+# --- Flowchart diagram ---
+FLOWCHART_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a FLOWCHART.
+Return ONLY valid JSON with this exact structure:
+{
+  "nodes": [
+    { "id": "n1", "type": "start" | "process" | "decision" | "end", "label": "Short label" }
+  ],
+  "edges": [ { "from": "n1", "to": "n2", "label": "yes/no/ok", "order": 1 } ]
+}
+Rules:
+- "type": "start" (rounded), "process" (box), "decision" (diamond), "end" (rounded).
+- "from" and "to" MUST be node ids.
+- Edges MUST have "order": 1, 2, 3... in flow order.
+- Keep labels SHORT."""
+
 # --- State diagram ---
 STATE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a STATE DIAGRAM.
 Return ONLY valid JSON with this exact structure:
@@ -118,6 +133,24 @@ Rules (strict):
 - Use at most 5 nodes and 2 artifacts. Fewer is better.
 - Keep names and labels SHORT (2-4 words). To the point only.
 - Every connection needs a label and order. "from" and "to" must be node ids."""
+
+
+# --- Mindtree diagram ---
+MINDTREE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a MIND MAP (Mindtree).
+Return ONLY valid JSON with this exact structure:
+{
+  "rootId": "root",
+  "nodes": [
+    { "id": "root", "label": "Central Topic", "parentId": "" },
+    { "id": "c1", "label": "Branch 1", "parentId": "root" }
+  ]
+}
+Rules:
+- "rootId" must match one node's "id". That node has "parentId": "".
+- All other nodes must have a valid "parentId".
+- "id" must be alphanumeric (keep it short).
+- "label" should be short (1-5 words).
+- Create a balanced tree with 2-4 levels depth."""
 
 
 def _extract_json(text: str) -> str:
@@ -197,6 +230,7 @@ def _uml_fix_hint(diagram_type: str) -> str:
         "state": "Keep 'states' (id, name, isInitial, isFinal) and 'transitions' (from, to, label, order). One isInitial.",
         "component": "Keep 'components' (id, name) and 'dependencies' (from, to, label, order).",
         "deployment": "Keep 'nodes' (id, name, type: device|executionEnv), 'artifacts' (id, name, nodeId), 'connections' (from, to, label, order).",
+        "mindtree": "Keep 'rootId' and 'nodes' (id, label, parentId). Ensure root exists and parentIds are valid.",
     }
     return hints.get(diagram_type, "Output only valid JSON matching the required structure.")
 
@@ -208,9 +242,11 @@ def plan_uml(diagram_type: str, prompt: str, llm) -> dict:
         "sequence": SEQUENCE_SYSTEM_PROMPT,
         "usecase": USECASE_SYSTEM_PROMPT,
         "activity": ACTIVITY_SYSTEM_PROMPT,
+        "flowchart": FLOWCHART_SYSTEM_PROMPT,
         "state": STATE_SYSTEM_PROMPT,
         "component": COMPONENT_SYSTEM_PROMPT,
         "deployment": DEPLOYMENT_SYSTEM_PROMPT,
+        "mindtree": MINDTREE_SYSTEM_PROMPT,
     }
     sys_prompt = prompts.get(diagram_type)
     if not sys_prompt or not llm:
@@ -300,6 +336,20 @@ def _mock_plan_uml(diagram_type: str, prompt: str) -> dict:
             ],
             "edges": [{"from": "start", "to": "a1", "label": "begin", "order": 1}, {"from": "a1", "to": "end", "label": "done", "order": 2}],
         }
+    if diagram_type == "flowchart":
+        return {
+            "nodes": [
+                {"id": "start", "type": "start", "label": "Start"},
+                {"id": "p1", "type": "process", "label": "Process"},
+                {"id": "d1", "type": "decision", "label": "Is Valid?"},
+                {"id": "end", "type": "end", "label": "End"},
+            ],
+            "edges": [
+                {"from": "start", "to": "p1", "label": "", "order": 1},
+                {"from": "p1", "to": "d1", "label": "", "order": 2},
+                {"from": "d1", "to": "end", "label": "yes", "order": 3},
+            ],
+        }
     if diagram_type == "state":
         return {
             "states": [
@@ -325,6 +375,16 @@ def _mock_plan_uml(diagram_type: str, prompt: str) -> dict:
                 {"from": "n1", "to": "n2", "label": "sends requests to", "order": 1},
             ],
         }
+    if diagram_type == "mindtree":
+        return {
+            "rootId": "root",
+            "nodes": [
+                {"id": "root", "label": "System", "parentId": ""},
+                {"id": "n1", "label": "Frontend", "parentId": "root"},
+                {"id": "n2", "label": "Backend", "parentId": "root"},
+                {"id": "n3", "label": "Database", "parentId": "n2"},
+            ],
+        }
     return {}
 
 
@@ -335,6 +395,7 @@ def generate_uml(diagram_type: str, plan: dict) -> dict:
         "sequence": _gen_sequence,
         "usecase": _gen_usecase,
         "activity": _gen_activity,
+        "flowchart": _gen_activity,
         "state": _gen_state,
         "component": _gen_component,
         "deployment": _gen_deployment,
@@ -365,6 +426,41 @@ def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
             tgt = (m.get("to") or "B").replace("->", "-")
             label = (m.get("label") or "").replace('"', "'").replace("\n", " ")[:60]
             lines.append(f'    {src}->>{tgt}: "{label}"')
+        return "\n".join(lines)
+
+    if diagram_type == "flowchart":
+        uml_nodes = plan.get("nodes", [])
+        raw_edges = plan.get("edges", [])
+        edges_sorted = sorted(raw_edges, key=lambda e: int(e.get("order", 0)))
+        if not uml_nodes:
+            return None
+        # Map plan node id -> safe Mermaid id
+        id_map: dict[str, str] = {}
+        for i, n in enumerate(uml_nodes):
+            raw_id = n.get("id") or f"n{i}"
+            safe = "".join(c if c.isalnum() else "_" for c in raw_id)[:25] or f"n{i}"
+            id_map[raw_id] = safe
+        lines = ["flowchart TD"]
+        for n in uml_nodes:
+            nid = id_map.get(n.get("id", ""), "n0")
+            label = (n.get("label") or nid).replace("]", " ").replace("[", " ").replace("(", " ").replace(")", " ").replace('"', "'")[:40]
+            t = (n.get("type") or "process").lower()
+            if t == "start":
+                lines.append(f'    {nid}(["{label}"])')
+            elif t == "end":
+                lines.append(f'    {nid}(["{label}"])')
+            elif t == "decision":
+                lines.append(f'    {nid}{{"{label}"}}')
+            else:
+                lines.append(f'    {nid}["{label}"]')
+        for e in edges_sorted:
+            fr = id_map.get(e.get("from", ""), (e.get("from") or "n0").replace("-", "_")[:25])
+            to = id_map.get(e.get("to", ""), (e.get("to") or "n0").replace("-", "_")[:25])
+            lbl = (e.get("label") or "").strip()
+            if lbl:
+                lines.append(f'    {fr} -->|"{lbl}"| {to}')
+            else:
+                lines.append(f"    {fr} --> {to}")
         return "\n".join(lines)
 
     if diagram_type == "activity":
@@ -560,6 +656,40 @@ def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
                 lines.append(f'    {fr} -->|"{label}"| {to}')
             else:
                 lines.append(f"    {fr} --> {to}")
+        return "\n".join(lines)
+
+    if diagram_type == "mindtree":
+        root_id = (plan.get("rootId") or "").strip()
+        nodes = plan.get("nodes", [])
+        if not root_id or not nodes:
+            return None
+            
+        # Build adjacency list for tree traversal
+        children = {}
+        node_map = {}
+        for n in nodes:
+            nid = (n.get("id") or "").strip()
+            if not nid: continue
+            node_map[nid] = n
+            pid = (n.get("parentId") or "").strip()
+            if pid:
+                children.setdefault(pid, []).append(nid)
+        
+        if root_id not in node_map:
+            return None
+
+        lines = ["mindmap", f"  root(({(node_map[root_id].get('label') or 'Root')[:40]}))"]
+        
+        def _dfs(pid, depth):
+            if depth > 5: return
+            indent = "  " * (depth + 1)
+            for cid in children.get(pid, []):
+                lbl = (node_map[cid].get("label") or cid)[:40].replace("(", "").replace(")", "")
+                # Different shapes based on depth could be cool, but keep it simple
+                lines.append(f"{indent}{lbl}")
+                _dfs(cid, depth + 1)
+        
+        _dfs(root_id, 1)
         return "\n".join(lines)
 
     return None

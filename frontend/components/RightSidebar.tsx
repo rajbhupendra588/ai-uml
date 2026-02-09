@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Github, Cpu, ChevronRight, ChevronDown, PanelRightClose } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { GitHubReposPanel } from "./GitHubReposPanel";
+import { RepoUrlInput } from "./RepoUrlInput";
 import { type ModelResponse } from "./ModelResponsePanel";
 
 interface RightSidebarProps {
@@ -78,7 +78,7 @@ export function RightSidebar({
               onToggle={() => setGithubExpanded(false)}
             />
             <div className="flex-1 overflow-y-auto min-h-0">
-              <GitHubReposPanel
+              <RepoUrlInput
                 onSelectRepo={onSelectRepo}
                 isLoading={isLoading}
               />

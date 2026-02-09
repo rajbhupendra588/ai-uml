@@ -37,6 +37,8 @@ export const viewport: Viewport = {
   themeColor: "#0f172a",
   width: "device-width",
   initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
 };
 
 export default function RootLayout({
@@ -46,13 +48,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased transition-colors duration-300`}
-        style={{ 
-          backgroundColor: "var(--background)", 
-          color: "var(--foreground)" 
-        }}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased transition-colors duration-300`}>
         <ThemeProvider>
           {children}
           <Toaster

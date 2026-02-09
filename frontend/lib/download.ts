@@ -3,18 +3,8 @@
  * Production-grade: consistent filenames, MIME types, and error handling.
  */
 
-export type DiagramType =
-  | "architecture"
-  | "hld"
-  | "lld"
-  | "mindtree"
-  | "class"
-  | "sequence"
-  | "usecase"
-  | "activity"
-  | "state"
-  | "component"
-  | "deployment";
+import { type DiagramType } from "./api";
+export type { DiagramType };
 
 const DATE_PART = () =>
   new Date().toISOString().slice(0, 10).replace(/-/g, "");

@@ -77,10 +77,158 @@ const lightMindmapTheme = {
   },
 };
 
+
+// --- Expanded Theme Configurations ---
+
+const baseThemeConfig = {
+  theme: "base" as const,
+  themeVariables: {
+    fontFamily: "Inter, system-ui, sans-serif",
+  },
+};
+
+export const DIAGRAM_THEMES = {
+  default: {
+    theme: "default" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#e0e7ff",
+      primaryTextColor: "#1e293b",
+      primaryBorderColor: "#6366f1",
+      lineColor: "#64748b",
+      secondaryColor: "#f1f5f9",
+      tertiaryColor: "#ffffff",
+    }
+  },
+  neutral: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#f1f5f9",
+      primaryTextColor: "#0f172a",
+      primaryBorderColor: "#cbd5e1",
+      lineColor: "#64748b",
+      secondaryColor: "#e2e8f0",
+      tertiaryColor: "#ffffff",
+    },
+  },
+  dark: {
+    theme: "dark" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#334155",
+      primaryTextColor: "#e2e8f0",
+      primaryBorderColor: "#475569",
+      lineColor: "#64748b",
+      secondaryColor: "#1e293b",
+      tertiaryColor: "#0f172a",
+    }
+  },
+  forest: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#ecfdf5",
+      primaryTextColor: "#064e3b",
+      primaryBorderColor: "#34d399",
+      lineColor: "#059669",
+      secondaryColor: "#d1fae5",
+      tertiaryColor: "#ffffff",
+    },
+  },
+  ocean: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#eff6ff",
+      primaryTextColor: "#1e3a8a",
+      primaryBorderColor: "#60a5fa",
+      lineColor: "#2563eb",
+      secondaryColor: "#dbeafe",
+      tertiaryColor: "#ffffff",
+    },
+  },
+  sunset: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#fff7ed",
+      primaryTextColor: "#7c2d12",
+      primaryBorderColor: "#fb923c",
+      lineColor: "#ea580c",
+      secondaryColor: "#ffedd5",
+      tertiaryColor: "#ffffff",
+    },
+  },
+  purple: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#faf5ff",
+      primaryTextColor: "#581c87",
+      primaryBorderColor: "#c084fc",
+      lineColor: "#9333ea",
+      secondaryColor: "#f3e8ff",
+      tertiaryColor: "#ffffff",
+    },
+  },
+  monochrome: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Inter, system-ui, sans-serif",
+      primaryColor: "#ffffff",
+      primaryTextColor: "#000000",
+      primaryBorderColor: "#000000",
+      lineColor: "#000000",
+      secondaryColor: "#ffffff",
+      tertiaryColor: "#ffffff",
+    },
+  },
+  cyberpunk: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Courier New, monospace",
+      primaryColor: "#000000",
+      primaryTextColor: "#00ff00",
+      primaryBorderColor: "#00ff00",
+      lineColor: "#00ff00",
+      secondaryColor: "#111111",
+      tertiaryColor: "#000000",
+    },
+  },
+  retro: {
+    theme: "base" as const,
+    themeVariables: {
+      fontFamily: "Georgia, serif",
+      primaryColor: "#fdf6e3",
+      primaryTextColor: "#586e75",
+      primaryBorderColor: "#b58900",
+      lineColor: "#839496",
+      secondaryColor: "#eee8d5",
+      tertiaryColor: "#fdf6e3",
+    }
+  }
+};
+
+export type DiagramTheme = keyof typeof DIAGRAM_THEMES;
+
 export interface MermaidDiagramProps {
   code: string;
   className?: string;
   is3D?: boolean;
+  look?: "classic" | "handDrawn";
+  diagramTheme?: DiagramTheme;
+  fontFamily?: string;
+  edgeCurve?: string; // basis, linear, step, etc.
+  nodeSpacing?: number;
+  rankSpacing?: number;
+  customColors?: {
+    nodeColor?: string;
+    edgeColor?: string;
+    textColor?: string;
+    bgColor?: string;
+  };
+  backgroundPattern?: "dots" | "lines" | "cross" | "none";
 }
 
 /** Inject SVG filters and apply 3D depth effect to diagram nodes. */
@@ -137,25 +285,106 @@ function isMindmap(code: string): boolean {
   return trimmed.startsWith("mindmap") || (trimmed.startsWith("---") && code.includes("mindmap"));
 }
 
-export function MermaidDiagram({ code, className = "", is3D = false }: MermaidDiagramProps) {
+export function MermaidDiagram({
+  code,
+  className = "",
+  is3D = false,
+  look = "classic",
+  diagramTheme = "default",
+  fontFamily,
+  edgeCurve = "basis",
+  nodeSpacing = 50,
+  rankSpacing = 50,
+  customColors,
+  backgroundPattern = "dots"
+}: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const diagramRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const { theme } = useTheme();
   const mindmap = isMindmap(code);
 
   useEffect(() => {
-    if (!code.trim() || !containerRef.current) return;
+    if (!code.trim() || !diagramRef.current) return;
     setError(null);
     const id = `diagram-${Date.now()}`;
-    const el = containerRef.current;
+    const el = diagramRef.current;
+
+    // Clear old content immediately to prevent "stuck" visual states
+    el.innerHTML = "";
+
     let cancelled = false;
 
-    const baseConfig = theme === "dark" ? darkThemeConfig : lightThemeConfig;
-    const mindmapConfig = theme === "dark" ? darkMindmapTheme : lightMindmapTheme;
-    const config = mindmap ? mindmapConfig : baseConfig;
+    // Resolve config: explicit diagramTheme > mindmap/mode-based defaults
+    let config = DIAGRAM_THEMES[diagramTheme];
+
+    // Fallback logic if "default" is selected (auto-switch based on mode)
+    if (diagramTheme === "default") {
+      if (mindmap) {
+        config = (theme === "dark" ? darkMindmapTheme : lightMindmapTheme) as any;
+      } else {
+        config = (theme === "dark" ? darkThemeConfig : lightThemeConfig) as any;
+      }
+    }
+
+    // START: Professional Styling Overrides
+    const flowConfig = {
+      curve: edgeCurve,
+      nodeSpacing: nodeSpacing,
+      rankSpacing: rankSpacing,
+      htmlLabels: true,
+      useMaxWidth: true,
+    };
+
+    // Merge into flowchart/sequence/etc specific configs
+    const finalConfig = {
+      ...config as any,
+      flowchart: { ...((config as any).flowchart || {}), ...flowConfig },
+      sequence: { ...((config as any).sequence || {}), ...flowConfig },
+      state: { ...((config as any).state || {}), ...flowConfig },
+      class: { ...((config as any).class || {}), ...flowConfig },
+      er: { ...((config as any).er || {}), ...flowConfig },
+      gantt: { ...((config as any).gantt || {}), ...flowConfig },
+      journey: { ...((config as any).journey || {}), ...flowConfig },
+    };
+    // END: Professional Styling Overrides
+
+    // Apply custom font if provided
+    if (finalConfig.themeVariables) {
+      finalConfig.themeVariables = { ...finalConfig.themeVariables };
+
+      if (fontFamily) {
+        finalConfig.themeVariables.fontFamily = fontFamily;
+      }
+
+      // Apply custom color overrides
+      if (customColors) {
+        if (customColors.nodeColor) {
+          finalConfig.themeVariables.primaryColor = customColors.nodeColor;
+        }
+        if (customColors.edgeColor) {
+          finalConfig.themeVariables.lineColor = customColors.edgeColor;
+          finalConfig.themeVariables.primaryBorderColor = customColors.edgeColor;
+          finalConfig.themeVariables.nodeBorder = customColors.edgeColor;
+        }
+        if (customColors.textColor) {
+          finalConfig.themeVariables.primaryTextColor = customColors.textColor;
+          finalConfig.themeVariables.titleColor = customColors.textColor;
+          // output text color?
+        }
+        if (customColors.bgColor) {
+          finalConfig.themeVariables.background = customColors.bgColor;
+          finalConfig.themeVariables.mainBkg = customColors.bgColor;
+        }
+      }
+    }
+
     mermaid.initialize({
       startOnLoad: false,
-      ...config,
+      look: look || "classic",
+      ...finalConfig,
+      // Enhanced accessibility and interaction
+      securityLevel: "loose",
     });
 
     mermaid
@@ -164,6 +393,7 @@ export function MermaidDiagram({ code, className = "", is3D = false }: MermaidDi
         if (cancelled || !el) return;
         const wrapper = document.createElement("div");
         wrapper.className = "mermaid-diagram-fit";
+        // Create a card-like effect for the diagram to sit on top of the pattern cleanly
         wrapper.style.cssText =
           "width:100%;height:100%;display:flex;align-items:center;justify-content:center;min-width:0;min-height:0;";
         wrapper.innerHTML = svg;
@@ -188,11 +418,11 @@ export function MermaidDiagram({ code, className = "", is3D = false }: MermaidDi
       });
 
     return () => { cancelled = true; };
-  }, [code, theme, mindmap, is3D]);
+  }, [code, theme, mindmap, is3D, look, diagramTheme, fontFamily, customColors, edgeCurve, nodeSpacing, rankSpacing]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    const svgEl = containerRef.current.querySelector("svg");
+    if (!diagramRef.current) return;
+    const svgEl = diagramRef.current.querySelector("svg");
     if (!svgEl) return;
     if (is3D) apply3DEffect(svgEl, theme === "dark");
     else remove3DEffect(svgEl);
@@ -203,10 +433,32 @@ export function MermaidDiagram({ code, className = "", is3D = false }: MermaidDi
   return (
     <div
       ref={containerRef}
-      className={`flex h-full min-h-0 w-full min-w-0 items-center justify-center overflow-auto bg-canvas p-6 transition-colors duration-300 ${mindmap ? "mermaid-mindmap-container" : ""} ${className}`}
+      className={`flex h-full min-h-0 w-full min-w-0 items-center justify-center overflow-auto bg-canvas p-6 transition-colors duration-300 relative ${mindmap ? "mermaid-mindmap-container" : ""} ${className}`}
     >
+      {/* Background Pattern Layer - Rendered independently */}
+      <div className="absolute inset-0 z-0 pointer-events-none opacity-20" style={{
+        backgroundImage: backgroundPattern === 'dots'
+          ? `radial-gradient(${theme === 'dark' ? '#94a3b8' : '#222'} 1px, transparent 1px)`
+          : backgroundPattern === 'lines'
+            ? `linear-gradient(${theme === 'dark' ? '#94a3b8' : '#222'} 1px, transparent 1px), linear-gradient(90deg, ${theme === 'dark' ? '#94a3b8' : '#222'} 1px, transparent 1px)`
+            : backgroundPattern === 'cross'
+              ? `radial-gradient(${theme === 'dark' ? '#94a3b8' : '#222'} 2px, transparent 2px), radial-gradient(${theme === 'dark' ? '#94a3b8' : '#222'} 1px, transparent 1px)`
+              : 'none',
+        backgroundSize: backgroundPattern === 'dots'
+          ? '20px 20px'
+          : backgroundPattern === 'lines'
+            ? '20px 20px'
+            : backgroundPattern === 'cross'
+              ? '30px 30px'
+              : 'auto',
+        backgroundPosition: 'center',
+      }} />
+
+      {/* Render Diagram in a separate localized container to allow background to persist underneath */}
+      <div ref={diagramRef} className="z-10 relative flex-1 min-w-0 min-h-0 flex items-center justify-center w-full h-full" />
+
       {error && (
-        <p className="text-sm text-amber-500" role="alert">
+        <p className="text-sm text-amber-500 z-20 absolute bottom-4" role="alert">
           {error}
         </p>
       )}
