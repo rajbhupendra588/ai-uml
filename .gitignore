@@ -39,3 +39,7 @@ htmlcov/
 # Misc
 *.pem
 .vercel
+
+# Local database
+*.db
+architectai.db

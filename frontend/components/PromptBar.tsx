@@ -5,8 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Send, Sparkles, Cpu, Github, Plus, Mic, MicOff, BarChart2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { RepoSelector } from "./RepoSelector";
-
 // Web Speech API for voice input (Chrome, Edge, Safari)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getSpeechRecognition(): (new () => any) | null {
@@ -75,7 +73,7 @@ export function PromptBar({
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
-    recognition.onresult = (event: { resultIndex: number; results: Array<{ isFinal: boolean; [i: number]: { transcript: string } }> }) => {
+    recognition.onresult = (event: { resultIndex: number; results: Array<{ isFinal: boolean;[i: number]: { transcript: string } }> }) => {
       let transcript = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const r = event.results[i];
@@ -115,20 +113,20 @@ export function PromptBar({
 
   if (centered) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-4">
-        <h2 className="mb-4 text-center text-xl font-medium text-[var(--foreground)]">
+      <div className="mx-auto w-full max-w-6xl px-3 sm:px-4">
+        <h2 className="mb-3 sm:mb-4 text-center text-lg sm:text-xl font-medium text-[var(--foreground)]">
           What are you working on?
         </h2>
         <form onSubmit={handleSubmit} className="relative">
           <div
             className={cn(
-              "flex items-center gap-2 rounded-2xl border bg-[var(--card)] px-4 py-3 transition",
+              "flex items-center gap-2 rounded-2xl border bg-[var(--card)] px-3 sm:px-4 py-2.5 sm:py-3 transition",
               isFocused ? "border-[var(--primary)]" : "border-[var(--border)]"
             )}
           >
             <button
               type="button"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+              className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
               aria-label="Attach"
             >
               <Plus className="h-5 w-5" />
@@ -140,7 +138,7 @@ export function PromptBar({
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 placeholder={inputPlaceholder}
-                className="min-h-10 min-w-0 flex-1 border-0 bg-transparent text-base text-[var(--foreground)] placeholder:text-[var(--muted)] focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="min-h-10 min-w-0 flex-1 border-0 bg-transparent text-sm sm:text-base text-[var(--foreground)] placeholder:text-[var(--muted)] focus-visible:ring-0 focus-visible:ring-offset-0"
                 disabled={isLoading}
                 aria-label="Ask anything"
               />
@@ -151,7 +149,7 @@ export function PromptBar({
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 placeholder={inputPlaceholder}
-                className="min-h-10 min-w-0 flex-1 border-0 bg-transparent text-base text-[var(--foreground)] placeholder:text-[var(--muted)] focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="min-h-10 min-w-0 flex-1 border-0 bg-transparent text-sm sm:text-base text-[var(--foreground)] placeholder:text-[var(--muted)] focus-visible:ring-0 focus-visible:ring-offset-0"
                 disabled={isLoading}
                 type="url"
                 aria-label="GitHub repository URL"
@@ -178,13 +176,13 @@ export function PromptBar({
             )}
             <button
               type="button"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+              className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
               aria-label="Audio"
             >
               <BarChart2 className="h-5 w-5" />
             </button>
           </div>
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          <div className="mt-2 sm:mt-3 flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
               onClick={() => setMode("describe")}
@@ -207,12 +205,12 @@ export function PromptBar({
               From repo
             </button>
           </div>
-          <div className="mt-4 flex justify-center">
+          <div className="mt-3 sm:mt-4 flex justify-center">
             <Button
               type="submit"
               disabled={isLoading || !canSubmit}
               className={cn(
-                "h-9 rounded-full px-5",
+                "h-10 sm:h-9 rounded-full px-6 sm:px-5",
                 canSubmit ? "bg-[var(--primary)] text-white hover:opacity-90" : "bg-[var(--secondary)] text-[var(--muted)]"
               )}
               aria-label={isDescribe ? "Generate" : "Analyze repo"}
@@ -263,16 +261,7 @@ export function PromptBar({
           From repo
         </button>
       </div>
-      {!isDescribe && user && githubOAuthEnabled && (
-        <div className="flex flex-wrap items-center gap-2">
-          <RepoSelector
-            onSelect={(url) => onGenerateFromRepo?.(url)}
-            disabled={isLoading}
-            sessionToken={sessionToken}
-          />
-          <span className="text-xs text-[var(--muted)]">or paste URL</span>
-        </div>
-      )}
+
       <form
         onSubmit={handleSubmit}
         className={cn(

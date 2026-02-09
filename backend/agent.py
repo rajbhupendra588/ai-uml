@@ -315,161 +315,21 @@ Required structure:
     return plan
 
 
-def _plan_lld(prompt: str, llm_to_use, context_str: str) -> dict:
-    """Plan a detailed Low-Level Design (module internals: classes, interfaces, dependencies)."""
-    if not has_llm:
-        # Mock LLD for testing
-        logger.debug("Mock LLD: generating simulated plan")
-        p = prompt.lower()
-        modules = []
-        if any(w in p for w in ["order", "cart", "ecommerce"]):
-            modules = [
-                {
-                    "name": "OrderService",
-                    "classes": [
-                        {"name": "Order", "attributes": ["id: string", "total: number"], "methods": ["calculateTotal()"]},
-                        {"name": "OrderRepository", "attributes": [], "methods": ["save(Order)", "findById(id)"]},
-                    ],
-                    "interfaces": [{"name": "IOrderRepository", "methods": ["save(Order)", "findById(id)"]}],
-                },
-                {
-                    "name": "PaymentService",
-                    "classes": [{"name": "Payment", "attributes": ["amount: number"], "methods": ["process()"]}],
-                    "interfaces": [],
-                },
-            ]
-        else:
-            modules = [
-                {
-                    "name": "ExampleModule",
-                    "classes": [
-                        {"name": "Example", "attributes": ["id: string"], "methods": ["doSomething()"]},
-                    ],
-                    "interfaces": [{"name": "IExample", "methods": ["execute()"]}],
-                },
-            ]
-        deps = [{"from": modules[0]["name"], "to": modules[1]["name"], "type": "uses", "label": ""}] if len(modules) > 1 else []
-        return {"type": "lld", "modules": modules, "dependencies": deps}
-
-    # REAL INTELLIGENCE (LLM) for LLD
-    system_prompt = f"""You are a Senior Software Architect creating a Low-Level Design (LLD). Analyze the user's request and produce a detailed module-level design with classes, interfaces, and dependencies.
-
-BEST PRACTICES / CONTEXT:
-- {context_str}
-
-Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
-Required structure:
-{{
-  "modules": [
-    {{
-      "name": "ModuleName",
-      "classes": [
-        {{"name": "ClassName", "attributes": ["attr: Type"], "methods": ["method(args): ReturnType"]}}
-      ],
-      "interfaces": [
-        {{"name": "IInterfaceName", "methods": ["method signature"]}}
-      ]
-    }}
-  ],
-  "dependencies": [
-    {{"from": "ModuleName", "to": "OtherModule", "type": "uses", "label": "optional description"}}
-  ]
-}}
-
-Rules:
-- Use 2-8 modules. Each module has 1-5 classes and 0-3 interfaces.
-- "from" and "to" in dependencies MUST be exact module names from the modules list.
-- Keep names and labels SHORT. Use standard OOP patterns."""
-
-    messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
-    try:
-        response = (llm_to_use or llm).invoke(messages)
-        logger.debug("LLD LLM raw response: %s", response.content[:500] if response.content else "<empty>")
-        plan = _extract_json(response.content)
-        plan["type"] = "lld"
-    except Exception as e:
-        logger.exception("LLD LLM error: %s", e)
-        plan = {
-            "type": "lld",
-            "modules": [
-                {
-                    "name": "ExampleModule",
-                    "classes": [{"name": "Example", "attributes": ["id: string"], "methods": ["doSomething()"]}],
-                    "interfaces": [],
-                },
-            ],
-            "dependencies": [],
-        }
-    return plan
-
-
-def _plan_mindtree(prompt: str, llm_to_use) -> dict:
-    """Plan a mind tree / mind map: root + branches (nodes with parentId)."""
-    if not has_llm:
-        p = prompt.lower()
-        nodes = [{"id": "n0", "label": "Central Idea", "parentId": None}]
-        if any(w in p for w in ["project", "plan"]):
-            nodes.extend([
-                {"id": "n1", "label": "Goals", "parentId": "n0"},
-                {"id": "n2", "label": "Tasks", "parentId": "n0"},
-                {"id": "n3", "label": "Resources", "parentId": "n0"},
-            ])
-        else:
-            nodes.extend([
-                {"id": "n1", "label": "Branch A", "parentId": "n0"},
-                {"id": "n2", "label": "Branch B", "parentId": "n0"},
-            ])
-        return {"nodes": nodes}
-
-    system_prompt = """You are an expert at creating mind maps. Turn the user's topic into a clear, visual mind map: one central concept with 3–6 main branches, and 1–4 sub-ideas per branch where it helps.
-
-Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
-Required structure:
-{
-  "nodes": [
-    { "id": "n0", "label": "Central topic (one short phrase)", "parentId": null },
-    { "id": "n1", "label": "Main branch 1", "parentId": "n0" },
-    { "id": "n2", "label": "Main branch 2", "parentId": "n0" },
-    { "id": "n3", "label": "Sub-idea of branch 1", "parentId": "n1" }
-  ]
-}
-Rules:
-- Exactly one root: the node with parentId null (id "n0"). This is the central idea.
-- Every other node has parentId set to an existing node id. Use ids n0, n1, n2, n3, ...
-- Use 6–18 nodes total: 1 root + 3–6 main branches from root + sub-branches for important ideas.
-- Labels: short and punchy (1–5 words). Use clear nouns or short phrases, like real mind map bubbles.
-- Balance the tree: avoid one branch with many children and others empty; 1–4 children per node is ideal."""
-
-    messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
-    try:
-        response = (llm_to_use or llm).invoke(messages)
-        plan = _extract_json(response.content)
-        if "nodes" not in plan or not isinstance(plan["nodes"], list):
-            plan = {"nodes": [{"id": "n0", "label": "Central Idea", "parentId": None}, {"id": "n1", "label": "Branch", "parentId": "n0"}]}
-        return plan
-    except Exception as e:
-        logger.exception("Mind tree LLM error: %s", e)
-        return {"nodes": [{"id": "n0", "label": "Central Idea", "parentId": None}, {"id": "n1", "label": "Branch", "parentId": "n0"}]}
-
-
 def planner_node(state: AgentState):
     """
-    Analyzes the user prompt and produces a plan. For architecture uses components;
-    for HLD uses detailed layered design; for UML types uses uml_flow.plan_uml.
+    Plans the diagram based on prompt and diagram_type.
+    Routes to _plan_hld, plan_uml, or architecture LLM.
     """
-    prompt = state["prompt"]
+    prompt = state.get("prompt") or ""
     diagram_type = state.get("diagram_type") or "architecture"
     model = state.get("model") or ""
-    llm_to_use = _get_llm_for_request(model) if model else _get_llm_for_request(None)
 
-    # RAG Retrieval for architecture/HLD
-    try:
-        from rag import ArchitectureRetriever
-        retriever = ArchitectureRetriever()
-        context = retriever.search(prompt)
-        context_str = "\n- ".join(context)
-    except Exception:
-        context_str = "No knowledge base available."
+    from rag import ArchitectureRetriever
+    retriever = ArchitectureRetriever()
+    context_parts = retriever.search(prompt, top_k=5)
+    context_str = "\n- ".join(context_parts) if context_parts else "Use industry best practices."
+
+    llm_to_use = _get_llm_for_request(model) if model else _get_llm_for_request(None)
 
     # Route to appropriate planner
     if diagram_type == "hld":
@@ -483,29 +343,11 @@ def planner_node(state: AgentState):
         )
         return {"diagram_plan": plan}
 
-    if diagram_type == "lld":
-        plan = _plan_lld(prompt, llm_to_use, context_str)
-        plan, _valid, _retry = _validate_and_retry(
-            "lld",
-            plan,
-            prompt,
-            llm_to_use,
-            "Keep 'modules' (name, classes, interfaces) and 'dependencies' (from, to, type, label). from/to must be module names.",
-        )
-        return {"diagram_plan": plan}
+    if diagram_type == "chat":
+        # Chat mode: no planning, just pass prompt to generator
+        return {"diagram_plan": {"prompt": prompt, "type": "chat"}}
 
-    if diagram_type == "mindtree":
-        plan = _plan_mindtree(prompt, llm_to_use)
-        plan, _valid, _retry = _validate_and_retry(
-            "mindtree",
-            plan,
-            prompt,
-            llm_to_use,
-            "Keep 'nodes' array with objects: id, label, parentId (null for root).",
-        )
-        return {"diagram_plan": plan}
-    
-    if diagram_type not in ("architecture", "hld", "lld", "mindtree"):
+    if diagram_type not in ("architecture", "hld"):
         from uml_flow import plan_uml
         plan = plan_uml(diagram_type, prompt, llm_to_use)
         return {"diagram_plan": plan}
@@ -593,8 +435,9 @@ Use 3-12 components. Be specific with names and types."""
     except Exception as e:
         logger.exception("LLM error: %s", e)
         plan = get_valid_plan("architecture", raw_plan if isinstance(raw_plan, dict) else {})
-    
+
     return {"diagram_plan": plan}
+
 
 # =============================================================================
 # ENHANCED COMPONENT DETECTION
@@ -1686,6 +1529,39 @@ def _hld_to_reactflow(plan: dict) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+def _generate_chat_mermaid(prompt: str, llm_to_use) -> str:
+    """
+    Generate generic Mermaid code for 'Chat' mode.
+    Allows user to ask for any diagram type supported by Mermaid.
+    """
+    if not llm_to_use:
+        return "graph TD\n    A[Mock Chat]\n    B[No LLM Configured]\n    A --> B"
+        
+    system_prompt = """You are a Mermaid.js expert. Generate VALID Mermaid code based on the user's request.
+Rules:
+1. Return ONLY the Mermaid code. No markdown fences (```mermaid), no explanations.
+2. If the user asks for a specific diagram type (Sequence, Class, State, Git, Gantt, Pie, etc.), use that.
+3. If the request is vague, infer the best diagram type.
+4. Ensure syntax is correct and up-to-date.
+5. Do not include 'mermaid' keyword at the start if it's not part of the syntax (e.g. use 'graph TD', 'sequenceDiagram', etc.).
+"""
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+    try:
+        response = llm_to_use.invoke(messages)
+        content = response.content.strip()
+        # Strip markdown fences if present
+        if content.startswith("```mermaid"):
+            content = content[10:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        return content.strip()
+    except Exception as e:
+        logger.exception("Chat generation error: %s", e)
+        return "graph TD\n    Error[Generation Failed]\n    Details[Check Logs]"
+
+
 def generator_node(state: AgentState):
     """
     Generates Mermaid diagram code from the plan.
@@ -1694,6 +1570,8 @@ def generator_node(state: AgentState):
     """
     plan = state["diagram_plan"]
     diagram_type = state.get("diagram_type") or "architecture"
+    model = state.get("model") or ""
+    llm_to_use = _get_llm_for_request(model) if model else _get_llm_for_request(None)
     logger.info(
         "generator_node",
         extra={
@@ -1703,6 +1581,18 @@ def generator_node(state: AgentState):
     )
 
     explanation = None
+    
+    # Chat / Generic Mermaid
+    if diagram_type == "chat":
+        prompt = plan.get("prompt") or state.get("prompt") or ""
+        mermaid_code = _generate_chat_mermaid(prompt, llm_to_use)
+        return {"json_output": {
+            "mermaid": mermaid_code,
+            "nodes": [],
+            "edges": [],
+            "versions": [{"code": mermaid_code, "layout": "Default", "direction": "TB", "description": "Generated from chat"}],
+            "selectedVersion": 0,
+        }}
     
     # HLD diagram - generate multiple versions
     if diagram_type == "hld":
@@ -1977,7 +1867,7 @@ def format_plan_for_display(plan: dict, diagram_type: str) -> str:
     lines: list[str] = []
     dt = (diagram_type or "architecture").lower()
 
-    if dt == "architecture":
+    if dt in ("architecture", "flowchart"): # Reverted to include "flowchart"
         comps = plan.get("components")
         if isinstance(comps, list) and comps:
             lines.append("Architecture components:")

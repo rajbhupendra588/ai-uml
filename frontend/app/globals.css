@@ -129,6 +129,7 @@ body {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -136,9 +137,12 @@ body {
 }
 
 @keyframes pulse-soft {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.7;
   }
@@ -164,6 +168,7 @@ body {
   font-weight: 600;
   fill: var(--foreground);
 }
+
 .react-flow__edge-textbg {
   fill: var(--card);
   stroke: var(--border);
@@ -181,13 +186,16 @@ body {
   stroke-linejoin: round;
   stroke-width: 1.8;
 }
+
 .mermaid-mindmap-container .mermaid-mindmap-svg rect {
   rx: 12;
   ry: 12;
 }
+
 .mermaid-mindmap-container .mermaid-mindmap-svg ellipse {
   stroke-width: 1.5;
 }
+
 .mermaid-mindmap-container .mermaid-mindmap-svg text {
   font-weight: 500;
 }
@@ -198,18 +206,22 @@ body {
   stroke-width: 1.5;
   transition: filter 0.3s ease;
 }
+
 .diagram-3d-active .cluster rect {
   filter: url(#diagram-3d-shadow);
   opacity: 0.95;
 }
+
 .diagram-3d-active .edgePath path,
 .diagram-3d-active .flowchart-link {
   filter: drop-shadow(1px 2px 2px rgba(0, 0, 0, 0.15));
 }
+
 .diagram-3d-active .node:hover {
   transform: translateY(-1px);
   transition: transform 0.15s ease;
 }
+
 .mermaid-diagram-fit svg {
   transition: filter 0.3s ease;
 }
@@ -219,6 +231,7 @@ body {
   from {
     stroke-dashoffset: 24;
   }
+
   to {
     stroke-dashoffset: 0;
   }
@@ -280,4 +293,89 @@ body {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+/* Mobile-specific styles */
+@media (max-width: 768px) {
+
+  /* Ensure proper touch handling */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Improve touch targets */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Responsive typography */
+  html {
+    font-size: 14px;
+  }
+
+  /* Prevent horizontal scroll */
+  body {
+    overflow-x: hidden;
+  }
+
+  /* Make ReactFlow controls more touch-friendly */
+  .react-flow__controls {
+    bottom: 80px !important;
+    right: 8px !important;
+  }
+
+  .react-flow__controls-button {
+    width: 44px !important;
+    height: 44px !important;
+  }
+
+  /* Hide minimap on mobile for better space */
+  .react-flow__minimap {
+    display: none;
+  }
+
+  /* Make edge labels more readable on mobile */
+  .react-flow__edge-text {
+    font-size: 10px;
+  }
+
+  /* Improve panel spacing on mobile */
+  .bg-panel {
+    border-radius: 12px;
+  }
+}
+
+/* Tablet-specific adjustments */
+@media (min-width: 769px) and (max-width: 1024px) {
+  html {
+    font-size: 15px;
+  }
+
+  .react-flow__controls {
+    bottom: 16px !important;
+  }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+
+  /* Larger tap targets for touch devices */
+  button:not(.react-flow__controls-button) {
+    padding: 0.75rem 1rem;
+  }
+
+  /* Improve scrolling performance */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Remove hover effects on touch devices */
+  .react-flow__node:hover {
+    transform: none;
+  }
 }

@@ -2,19 +2,16 @@
 Analyze a GitHub repository via REST API and build a text summary for diagram generation.
 Uses repo metadata, file tree, and key file contents (package.json, README, etc.).
 """
-import base64
 import logging
 import os
 from urllib.parse import urlparse
 
 import httpx
 
-from config import GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
-
 logger = logging.getLogger("architectai.github_repo")
 
 GITHUB_API_BASE = "https://api.github.com"
-# Optional: GITHUB_TOKEN for higher rate limit and private repos
+# Optional: GITHUB_TOKEN for higher rate limit (5000/hour vs 60/hour unauthenticated)
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # File paths we care about (root or common locations) for understanding the app
@@ -99,10 +96,6 @@ def _headers() -> dict[str, str]:
     h = {"Accept": "application/vnd.github.v3+json", "User-Agent": "ArchitectAI-App"}
     if GITHUB_TOKEN:
         h["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-    elif GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET:
-        # Use OAuth app credentials for higher rate limit (5000/hour vs 60/hour)
-        auth = base64.b64encode(f"{GITHUB_CLIENT_ID}:{GITHUB_CLIENT_SECRET}".encode()).decode()
-        h["Authorization"] = f"Basic {auth}"
     return h
 
 

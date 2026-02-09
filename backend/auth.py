@@ -1,135 +1,106 @@
 """
-GitHub OAuth: redirect, callback, session store, and helpers.
-Uses in-memory session store and signed cookie for session_id.
+Simple email/password authentication.
 """
-import logging
-import os
-import secrets
-from urllib.parse import urlencode
+from datetime import datetime, timedelta
+from typing import Optional
 
-import httpx
-from itsdangerous import BadSignature, URLSafeTimedSerializer
+import bcrypt
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
-from config import (
-    FRONTEND_URL,
-    GITHUB_CLIENT_ID,
-    GITHUB_CLIENT_SECRET,
-    SECRET_KEY,
-)
+from config import SECRET_KEY
+from database import get_db
+from models import User
 
-logger = logging.getLogger("architectai.auth")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
-COOKIE_NAME = "architectai_session"
-COOKIE_MAX_AGE = 30 * 24 * 3600  # 30 days
-SERIALIZER = URLSafeTimedSerializer(SECRET_KEY, salt="architectai-session")
-
-# session_id -> {"access_token": str, "login": str}
-_sessions: dict[str, dict] = {}
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def is_github_oauth_configured() -> bool:
-    return bool(GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET)
+def hash_password(password: str) -> str:
+    # bcrypt has a 72-byte limit; truncate to avoid errors
+    pwd = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(pwd, bcrypt.gensalt()).decode("utf-8")
 
 
-def get_github_authorize_url(redirect_uri: str) -> str:
-    params = {
-        "client_id": GITHUB_CLIENT_ID,
-        "redirect_uri": redirect_uri,
-        "scope": "read:user user:email repo",
-        "state": secrets.token_urlsafe(32),
-    }
-    return "https://github.com/login/oauth/authorize?" + urlencode(params)
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(
+        plain.encode("utf-8")[:72],
+        hashed.encode("utf-8"),
+    )
 
 
-async def exchange_code_for_token(code: str, redirect_uri: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        r = await client.post(
-            "https://github.com/login/oauth/access_token",
-            headers={"Accept": "application/json"},
-            data={
-                "client_id": GITHUB_CLIENT_ID,
-                "client_secret": GITHUB_CLIENT_SECRET,
-                "code": code,
-                "redirect_uri": redirect_uri,
-            },
-            timeout=10.0,
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+async def get_current_user(
+    db: AsyncSession = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> Optional[User]:
+    """Get current user from Bearer token. Returns None if not authenticated."""
+    if not credentials:
+        return None
+    token = credentials.credentials
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+        uid = int(user_id)
+    except (JWTError, ValueError):
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.id == uid))
+    user = result.scalars().first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+async def get_current_user_required(
+    current_user: Optional[User] = Depends(get_current_user),
+) -> User:
+    """Dependency that requires authentication. Raises 401 if not logged in."""
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-        r.raise_for_status()
-        return r.json()
+    return current_user
 
 
-def get_user_login(access_token: str) -> str | None:
-    with httpx.Client() as client:
-        r = client.get(
-            "https://api.github.com/user",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github.v3+json"},
-            timeout=10.0,
-        )
-        if r.status_code != 200:
+async def get_current_user_from_request(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """Get current user from Authorization header if present. Returns None if no valid token."""
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
             return None
-        data = r.json()
-        return data.get("login") or data.get("name") or "user"
-
-
-def create_session(access_token: str) -> str:
-    login = get_user_login(access_token) or "user"
-    session_id = secrets.token_urlsafe(32)
-    _sessions[session_id] = {"access_token": access_token, "login": login}
-    return session_id
-
-
-def get_session_from_cookie(cookie_value: str | None) -> dict | None:
-    if not cookie_value:
+        uid = int(user_id)
+    except (JWTError, ValueError):
         return None
-    try:
-        session_id = SERIALIZER.loads(cookie_value, max_age=COOKIE_MAX_AGE)
-    except BadSignature:
-        return None
-    return _sessions.get(session_id)
-
-
-def sign_session_id(session_id: str) -> str:
-    return SERIALIZER.dumps(session_id)
-
-
-def destroy_session(session_id: str) -> None:
-    _sessions.pop(session_id, None)
-
-
-def get_access_token_from_cookie(cookie_value: str | None) -> str | None:
-    sess = get_session_from_cookie(cookie_value)
-    if not sess:
-        return None
-    return sess.get("access_token")
-
-
-def get_login_from_cookie(cookie_value: str | None) -> str | None:
-    sess = get_session_from_cookie(cookie_value)
-    if not sess:
-        return None
-    return sess.get("login")
-
-
-def get_session_from_token(token_value: str | None) -> dict | None:
-    """Validate signed session token (e.g. from X-Session-Token header for cross-origin)."""
-    if not token_value:
-        return None
-    try:
-        session_id = SERIALIZER.loads(token_value, max_age=COOKIE_MAX_AGE)
-    except BadSignature:
-        return None
-    return _sessions.get(session_id)
-
-
-def get_access_token_from_request(cookie_value: str | None, header_token: str | None) -> str | None:
-    sess = get_session_from_cookie(cookie_value) or get_session_from_token(header_token)
-    if not sess:
-        return None
-    return sess.get("access_token")
-
-
-def get_login_from_request(cookie_value: str | None, header_token: str | None) -> str | None:
-    sess = get_session_from_cookie(cookie_value) or get_session_from_token(header_token)
-    if not sess:
-        return None
-    return sess.get("login")
+    result = await db.execute(select(User).where(User.id == uid))
+    return result.scalars().first()

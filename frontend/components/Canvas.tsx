@@ -24,6 +24,7 @@ import { GeneratingOverlay } from "./GeneratingOverlay";
 import { DiagramTypeSelector } from "./DiagramTypeSelector";
 import { DiagramDownloadMenu } from "./DiagramDownloadMenu";
 import { EditNodePanel, type EditingNode } from "./EditNodePanel";
+import { DiagramControlsPanel } from "./DiagramControlsPanel";
 import { MermaidStyleEdge, MermaidBezierEdge } from "./MermaidStyleEdge";
 import {
   ClassNode,
@@ -51,12 +52,21 @@ import type { DiagramType } from "@/lib/api";
 import { type ModelResponse } from "./ModelResponsePanel";
 import { ThemeToggle } from "./ThemeToggle";
 import { useTheme } from "./ThemeProvider";
-import { MermaidDiagram } from "./MermaidDiagram";
+import { MermaidDiagram, type DiagramTheme, DIAGRAM_THEMES } from "./MermaidDiagram";
 import { SideKick, SideKickToggle, type ContextMessage } from "./SideKick";
 import { cn } from "@/lib/utils";
-import { VersionSwitcher, type DiagramVersion } from "./VersionSwitcher";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
-import { Sparkles, FilePlus2 } from "lucide-react";
+export interface DiagramVersion {
+  code: string;
+  layout: string;
+  direction: string;
+  description: string;
+}
+import { Sparkles, FilePlus2, Save, FolderOpen, Pencil, Palette } from "lucide-react";
+import { SaveDiagramModal } from "./SaveDiagramModal";
+import { DiagramsListPanel } from "./DiagramsListPanel";
+import { getAuthHeaders, getToken } from "@/lib/auth";
+import { SignupModal } from "@/components/auth/SignupModal";
 
 const EMPTY_NODES: Node[] = [];
 const MAX_UNDO_HISTORY = 50;
@@ -171,18 +181,7 @@ function summarizePlan(plan: Record<string, unknown>, diagramType: DiagramType):
       if (parts.length) return parts.join(" · ");
     }
   }
-  if (diagramType === "lld") {
-    const modules = plan.modules as Array<{ name?: string; classes?: Array<{ name?: string }> }> | undefined;
-    if (Array.isArray(modules) && modules.length) {
-      return modules.map((m) => `${m.name || "?"}: ${(m.classes || []).map((c) => c.name || "?").join(", ")}`).join(" · ");
-    }
-  }
-  if (diagramType === "mindtree") {
-    const nodes = plan.nodes as Array<{ label?: string }> | undefined;
-    if (Array.isArray(nodes) && nodes.length) {
-      return nodes.map((n) => n.label || "?").join(" → ");
-    }
-  }
+
   if (diagramType === "usecase") {
     const actors = plan.actors as Array<{ name?: string }> | undefined;
     const useCases = plan.useCases as Array<{ name?: string }> | undefined;
@@ -202,10 +201,19 @@ function summarizePlan(plan: Record<string, unknown>, diagramType: DiagramType):
       return participants.map((p) => p.name || p.id || "?").join(" → ");
     }
   }
+  if (diagramType === "chat") {
+    return (plan.prompt as string) || "General Query";
+  }
   return "Plan ready";
 }
 
-function CanvasInner() {
+
+
+export interface CanvasProps {
+  onEditCode?: (code: string) => void;
+}
+
+function CanvasInner({ onEditCode }: CanvasProps) {
   const [nodes, setNodes, onNodesChangeBase] = useNodesState(EMPTY_NODES);
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
@@ -231,12 +239,58 @@ function CanvasInner() {
   const [showHelp, setShowHelp] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [newDiagramCount, setNewDiagramCount] = useState(0);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [diagramsPanelOpen, setDiagramsPanelOpen] = useState(false);
+  const [savedDiagramId, setSavedDiagramId] = useState<number | null>(null);
+  const [signupOpen, setSignupOpen] = useState(false);
   // Undo/redo history (only for React Flow canvas; not for Mermaid view)
   const [past, setPast] = useState<HistorySnapshot[]>([]);
   const [future, setFuture] = useState<HistorySnapshot[]>([]);
+  const [is3D, setIs3D] = useState(false);
+  const [look, setLook] = useState<"classic" | "handDrawn">("classic");
+  const [diagramTheme, setDiagramTheme] = useState<DiagramTheme>("default");
+  const [diagramFont, setDiagramFont] = useState<string>("Inter, sans-serif");
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [showCode, setShowCode] = useState(false);
+  const [diagramControlsOpen, setDiagramControlsOpen] = useState(true);
+
+  // Advanced Styling State
+  const [edgeCurve, setEdgeCurve] = useState("monotoneX");
+  const [spacing, setSpacing] = useState<"compact" | "normal" | "wide">("normal");
+  const [backgroundPattern, setBackgroundPattern] = useState<"dots" | "lines" | "cross" | "none">("dots");
+  const [layoutDirection, setLayoutDirection] = useState("TD");
+
+  const [customColors, setCustomColors] = useState<{
+    nodeColor?: string;
+    edgeColor?: string;
+    textColor?: string;
+    bgColor?: string;
+  }>({});
+  const themeMenuRef = useRef<HTMLDivElement>(null);
   const skipNextPushRef = useRef(false);
   const lastPromptRef = useRef<string>("");
   const flowContainerRef = useRef<HTMLDivElement>(null);
+
+  // Close theme menu when clicking outside
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(event.target as globalThis.Node)) {
+        setThemeMenuOpen(false);
+      }
+    };
+
+    // Add a small delay to avoid immediate closure
+    const timeoutId = setTimeout(() => {
+      document.addEventListener("mousedown", handleClickOutside);
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [themeMenuOpen]);
 
   useEffect(() => {
     fetch(getModelsUrl())
@@ -247,7 +301,7 @@ function CanvasInner() {
           if (d.default) setSelectedModel(d.default);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // Restore persisted state from localStorage
@@ -340,8 +394,32 @@ function CanvasInner() {
     setExplanation(null);
     setModelResponse(null);
     setNewDiagramCount((c) => c + 1); // Clears GitHub repos panel cache
+    setSavedDiagramId(null);
+    setCustomColors({});
     toast.success("New diagram");
   }, [setNodes, setEdges]);
+
+  const handleLoadDiagram = useCallback(
+    (data: {
+      diagramCode: string | null;
+      nodes: Node[];
+      edges: Edge[];
+      diagramType: string;
+      diagramPlan?: Record<string, unknown> | null;
+      diagramId?: number;
+    }) => {
+      setDiagramCode(data.diagramCode);
+      setNodes(data.nodes || []);
+      setEdges(data.edges || []);
+      setDiagramType(data.diagramType as DiagramType);
+      setDiagramPlan(data.diagramPlan || null);
+      setSavedDiagramId(data.diagramId ?? null);
+      setPast([]);
+      setFuture([]);
+      toast.success("Diagram loaded");
+    },
+    [setNodes, setEdges]
+  );
 
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
@@ -406,6 +484,34 @@ function CanvasInner() {
     pushPast();
   }, [pushPast]);
 
+  /* ---------- Styles & Layout Handlers ---------- */
+
+  const handleLayoutDirectionChange = useCallback((dir: string) => {
+    if (!diagramCode) return;
+    // Replace direction in graph/flowchart definition
+    // Improve regex to tolerate whitespace, newlines, and comments before the direction
+    // E.g. "graph TD", "flowchart   LR", "  graph \n TD", etc.
+    // Also handle possible frontmatter if present
+    const regex = /((?:^|\n)\s*(?:graph|flowchart)\s+)(TD|TB|BT|RL|LR)/i;
+    if (regex.test(diagramCode)) {
+      const newCode = diagramCode.replace(regex, `$1${dir}`);
+      setDiagramCode(newCode);
+    } else {
+      // If no direction found, maybe it's using "direction LR" inside (e.g. for subgraphs or new syntax)
+      // But for top-level, let's try to inject if it starts with graph/flowchart without direction?
+      // For now, just try to replace if it matches the pattern
+    }
+    setLayoutDirection(dir);
+  }, [diagramCode]);
+
+  const { nodeSpacing, rankSpacing } = useMemo(() => {
+    switch (spacing) {
+      case "compact": return { nodeSpacing: 10, rankSpacing: 30 };
+      case "wide": return { nodeSpacing: 80, rankSpacing: 80 };
+      default: return { nodeSpacing: 50, rankSpacing: 50 };
+    }
+  }, [spacing]);
+
   /* ---------- Prompt handler ---------- */
   const handlePrompt = useCallback(async (prompt: string) => {
     const trimmedPrompt = (prompt ?? "").trim();
@@ -418,12 +524,29 @@ function CanvasInner() {
         setLoading(false);
         return;
       }
+
+      // Check for guest limit
+      // Check for guest limit
+      const token = getToken();
+      const isDev = process.env.NODE_ENV === "development";
+
+      if (!token && !isDev) {
+        const count = parseInt(localStorage.getItem("guest_diagram_count") || "0", 10);
+        if (count >= 10) { // Bumped to 10 for safety, but isDev handles local testing
+          setLoading(false);
+          setSignupOpen(true);
+          toast.info("Sign up to create more diagrams!");
+          return;
+        }
+        localStorage.setItem("guest_diagram_count", (count + 1).toString());
+      }
+
       const diagramTypeToSend = toValidDiagramType(diagramType);
 
       if (planFirstMode) {
         const response = await fetch(getPlanUrl(), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             prompt: trimmedPrompt,
             diagram_type: diagramTypeToSend,
@@ -464,7 +587,7 @@ function CanvasInner() {
 
       const response = await fetch(getGenerateUrl(), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           prompt: trimmedPrompt,
           diagram_type: diagramTypeToSend,
@@ -556,7 +679,7 @@ function CanvasInner() {
     try {
       const response = await fetch(getGenerateFromPlanUrl(), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           diagram_plan: pendingPlan.diagram_plan,
           diagram_type: toValidDiagramType(pendingPlan.diagram_type),
@@ -621,11 +744,22 @@ function CanvasInner() {
 
   const handleGenerateFromRepo = useCallback(
     async (repoUrl: string) => {
+      // Check for guest limit
+      const token = getToken();
+      if (!token) {
+        const count = parseInt(localStorage.getItem("guest_diagram_count") || "0", 10);
+        if (count >= 2) {
+          setSignupOpen(true);
+          toast.info("Sign up to create more diagrams!");
+          return;
+        }
+        localStorage.setItem("guest_diagram_count", (count + 1).toString());
+      }
       setLoading(true);
       try {
         const response = await fetch(getGenerateFromRepoUrl(), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             repo_url: (repoUrl || "").trim(),
             diagram_type: toValidDiagramType(diagramType),
@@ -823,74 +957,7 @@ function CanvasInner() {
     toast.success("Context history cleared");
   }, []);
 
-  const handleGenerateLld = useCallback(
-    async (componentName: string) => {
-      const prompt = `Low-level design for ${componentName} including classes, interfaces, and internal dependencies`;
-      setLoading(true);
-      setPendingPlan(null);
-      try {
-        const response = await fetch(getGenerateUrl(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            diagram_type: "lld",
-            model: selectedModel || null,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          const message =
-            typeof data.detail === "string"
-              ? data.detail
-              : "LLD generation failed.";
-          toast.error(message);
-          return;
-        }
-        const mermaidCode = data.mermaid ?? "";
-        const versions: DiagramVersion[] = data.versions ?? [];
-        const explanationText =
-          typeof data.explanation === "string" && data.explanation.trim()
-            ? data.explanation.trim()
-            : null;
-        setDiagramType("lld");
-        setExplanation(explanationText);
-        setModelResponse({ nodes: [], edges: [], explanation: explanationText ?? undefined });
-        setDiagramVersions(versions);
-        setSelectedVersionIndex(0);
-        if (data.diagram_plan && typeof data.diagram_plan === "object") {
-          setDiagramPlan(data.diagram_plan as Record<string, unknown>);
-        }
-        if (mermaidCode) {
-          setDiagramCode(mermaidCode);
-          setNodes(EMPTY_NODES);
-          setEdges([]);
-          setPast([]);
-          setFuture([]);
-          setContextMessages((prev) => [
-            ...prev,
-            { id: `user-${Date.now()}`, role: "user", content: prompt, timestamp: new Date() },
-            {
-              id: `assistant-${Date.now()}`,
-              role: "assistant",
-              content: explanationText || "LLD diagram generated",
-              timestamp: new Date(),
-              diagramType: "lld",
-            },
-          ]);
-          toast.success("LLD diagram generated");
-        } else {
-          toast.warning("No diagram returned.");
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Network error.";
-        toast.error(message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [selectedModel, setNodes, setEdges]
-  );
+
 
   const handleSelectVersion = useCallback((index: number) => {
     if (diagramVersions[index]) {
@@ -905,23 +972,23 @@ function CanvasInner() {
       {/* ==================== Main content area ==================== */}
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-canvas transition-colors duration-300">
         {/* ---- Top toolbar ---- */}
-        <div className="flex shrink-0 items-center gap-3 border-b border-panel bg-panel px-4 py-2 transition-colors duration-300">
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3 border-b border-panel bg-panel px-2 sm:px-4 py-2 transition-colors duration-300 overflow-x-auto">
           {/* New diagram */}
           {hasDiagram && (
             <button
               type="button"
               onClick={handleNewDiagram}
-              className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition"
+              className="flex h-9 sm:h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 sm:px-2.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition shrink-0"
               title="New diagram (Ctrl+N)"
             >
               <FilePlus2 className="h-3.5 w-3.5" />
-              New
+              <span className="hidden sm:inline">New</span>
             </button>
           )}
 
           {/* Diagram type */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-muted">Diagram:</span>
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            <span className="text-xs font-medium text-muted hidden md:inline">Diagram:</span>
             <DiagramTypeSelector
               value={diagramType}
               onChange={setDiagramType}
@@ -930,7 +997,7 @@ function CanvasInner() {
           </div>
 
           {/* Plan first toggle */}
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted">
+          <label className="hidden lg:flex cursor-pointer items-center gap-1.5 text-xs text-muted shrink-0">
             <input
               type="checkbox"
               checked={planFirstMode}
@@ -941,33 +1008,10 @@ function CanvasInner() {
             <span>Plan first</span>
           </label>
 
-          {/* Version Switcher - inline in toolbar */}
-          {!showWelcome && diagramVersions.length > 1 && (
-            <div className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--card)] p-0.5">
-              {diagramVersions.map((version, index) => {
-                const isSelected = index === selectedVersionIndex;
-                return (
-                  <button
-                    key={index}
-                    type="button"
-                    onClick={() => handleSelectVersion(index)}
-                    className={cn(
-                      "rounded-md px-2 py-1 text-xs font-medium transition",
-                      isSelected
-                        ? "bg-[var(--primary)] text-white"
-                        : "text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
-                    )}
-                    title={version.description}
-                  >
-                    {version.layout}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+
 
           {/* Spacer */}
-          <div className="flex-1" />
+          <div className="flex-1 min-w-2" />
 
           {/* Undo/Redo */}
           {!showWelcome && !diagramCode && (
@@ -976,7 +1020,7 @@ function CanvasInner() {
                 type="button"
                 onClick={undo}
                 disabled={past.length === 0 || loading}
-                className="flex h-8 items-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:pointer-events-none"
+                className="hidden sm:flex h-9 sm:h-8 items-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:pointer-events-none shrink-0"
                 title="Undo (Ctrl+Z)"
               >
                 Undo
@@ -985,7 +1029,7 @@ function CanvasInner() {
                 type="button"
                 onClick={redo}
                 disabled={future.length === 0 || loading}
-                className="flex h-8 items-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:pointer-events-none"
+                className="hidden sm:flex h-9 sm:h-8 items-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:pointer-events-none shrink-0"
                 title="Redo (Ctrl+Shift+Z)"
               >
                 Redo
@@ -993,28 +1037,58 @@ function CanvasInner() {
             </>
           )}
 
+          {/* Save / My Diagrams */}
+          <div className="shrink-0 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setDiagramsPanelOpen(true)}
+              className="flex h-9 sm:h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 sm:px-2.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition shrink-0"
+              title="My Diagrams"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Diagrams</span>
+            </button>
+            {hasDiagram && (
+              <button
+                type="button"
+                onClick={() => setSaveModalOpen(true)}
+                className="flex h-9 sm:h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 sm:px-2.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition shrink-0"
+                title="Save diagram"
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Save</span>
+              </button>
+            )}
+          </div>
+
           {/* Download */}
           {!showWelcome && (
-            <DiagramDownloadMenu
-              containerRef={flowContainerRef}
-              diagramType={diagramType}
-              nodes={nodes}
-              edges={edges}
-              diagramCode={diagramCode}
-              onPrepareExport={handlePrepareExport}
-              disabled={loading}
-              open={downloadMenuOpen}
-              onOpenChange={setDownloadMenuOpen}
-            />
+            <div className="shrink-0">
+              <DiagramDownloadMenu
+                containerRef={flowContainerRef}
+                diagramType={diagramType}
+                nodes={nodes}
+                edges={edges}
+                diagramCode={diagramCode}
+                onPrepareExport={handlePrepareExport}
+                disabled={loading}
+                open={downloadMenuOpen}
+                onOpenChange={setDownloadMenuOpen}
+              />
+            </div>
           )}
 
-          <ThemeToggle />
+          <div className="shrink-0">
+            <ThemeToggle />
+          </div>
 
           {/* Architect panel toggle */}
-          <SideKickToggle
-            onClick={() => setShowSideKick((p) => !p)}
-            isOpen={showSideKick}
-          />
+          <div className="shrink-0">
+            <SideKickToggle
+              onClick={() => setShowSideKick((p) => !p)}
+              isOpen={showSideKick}
+            />
+          </div>
         </div>
 
         {/* ---- Canvas / Diagram area ---- */}
@@ -1026,7 +1100,43 @@ function CanvasInner() {
           className="relative flex-1 min-h-0 min-w-0 overflow-auto bg-canvas transition-colors duration-300 data-[exporting=true]:[&_[data-diagram-download-hide]]:invisible"
         >
           {diagramCode ? (
-            <MermaidDiagram code={diagramCode} className="h-full min-h-0 w-full min-w-0" />
+            showCode ? (
+              /* Show raw Mermaid code */
+              <div className={cn("flex h-full w-full flex-col items-center justify-center p-6 bg-canvas transition-all duration-300", diagramControlsOpen ? "pl-[280px]" : "p-6")}>
+                <div className="w-full max-w-4xl rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-lg overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--secondary)] px-4 py-2">
+                    <span className="text-sm font-medium text-[var(--foreground)]">Mermaid Code</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(diagramCode);
+                        toast.success("Code copied to clipboard!");
+                      }}
+                      className="rounded px-2 py-1 text-xs font-medium text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--foreground)] transition-colors"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre className="overflow-auto p-4 text-sm text-[var(--foreground)] bg-[var(--background)] max-h-[calc(100vh-200px)]">
+                    <code>{diagramCode}</code>
+                  </pre>
+                </div>
+              </div>
+            ) : (
+              /* Show rendered diagram */
+              <MermaidDiagram
+                code={diagramCode}
+                className={cn("h-full w-full transition-all duration-300", diagramControlsOpen && "pl-64")}
+                is3D={is3D}
+                look={look}
+                diagramTheme={diagramTheme}
+                fontFamily={diagramFont}
+                customColors={customColors}
+                edgeCurve={edgeCurve}
+                nodeSpacing={nodeSpacing}
+                rankSpacing={rankSpacing}
+                backgroundPattern={backgroundPattern}
+              />
+            )
           ) : showWelcome ? (
             /* ---- Empty canvas placeholder ---- */
             <div className="flex h-full flex-col items-center justify-center text-center">
@@ -1072,10 +1182,13 @@ function CanvasInner() {
               proOptions={{ hideAttribution: true }}
             >
               <Background
-                variant={BackgroundVariant.Dots}
-                gap={20}
+                variant={backgroundPattern === "lines" ? BackgroundVariant.Lines : backgroundPattern === "cross" ? BackgroundVariant.Cross : BackgroundVariant.Dots}
+                gap={spacing === "compact" ? 15 : spacing === "wide" ? 30 : 20}
                 size={1}
-                color={theme === "dark" ? "rgba(71, 85, 105, 0.35)" : "rgba(71, 85, 105, 0.2)"}
+                color={theme === "dark"
+                  ? (backgroundPattern === "none" ? "transparent" : "rgba(71, 85, 105, 0.35)")
+                  : (backgroundPattern === "none" ? "transparent" : "rgba(71, 85, 105, 0.2)")
+                }
               />
               <CanvasKeyboardShortcuts
                 onUndo={undo}
@@ -1105,66 +1218,105 @@ function CanvasInner() {
             </ReactFlow>
           )}
 
-          {/* Zoom controls for Mermaid diagrams */}
+
           {diagramCode && (
-            <div data-diagram-download-hide className="absolute bottom-4 right-4 z-20 flex flex-col gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-lg">
-              <button
-                type="button"
-                onClick={() => {
-                  const svg = flowContainerRef.current?.querySelector("svg");
-                  if (!svg) return;
-                  const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
-                  const next = Math.min(cur + 0.15, 3);
-                  svg.style.transform = `scale(${next})`;
-                  svg.style.transformOrigin = "center center";
+            <>
+              {/* Diagram Controls Panel */}
+              <DiagramControlsPanel
+                isOpen={diagramControlsOpen}
+                onToggle={() => setDiagramControlsOpen(p => !p)}
+                look={look}
+                setLook={setLook}
+                is3D={is3D}
+                setIs3D={setIs3D}
+                diagramTheme={diagramTheme}
+                setDiagramTheme={setDiagramTheme}
+                diagramFont={diagramFont}
+                setDiagramFont={setDiagramFont}
+                showCode={showCode}
+                setShowCode={setShowCode}
+                diagramVersions={diagramVersions}
+                selectedVersionIndex={selectedVersionIndex}
+                onVersionChange={(idx, code) => {
+                  setSelectedVersionIndex(idx);
+                  setDiagramCode(code);
                 }}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
-                title="Zoom in"
-                aria-label="Zoom in"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const svg = flowContainerRef.current?.querySelector("svg");
-                  if (!svg) return;
-                  const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
-                  const next = Math.max(cur - 0.15, 0.3);
-                  svg.style.transform = `scale(${next})`;
-                  svg.style.transformOrigin = "center center";
-                }}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
-                title="Zoom out"
-                aria-label="Zoom out"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const svg = flowContainerRef.current?.querySelector("svg");
-                  if (!svg) return;
-                  svg.style.transform = "scale(1)";
-                }}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-bold text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
-                title="Reset zoom"
-                aria-label="Reset zoom"
-              >
-                1:1
-              </button>
-            </div>
+                customColors={customColors}
+                setCustomColors={setCustomColors}
+                // Advanced Styling
+                backgroundPattern={backgroundPattern}
+                setBackgroundPattern={setBackgroundPattern}
+                edgeCurve={edgeCurve}
+                setEdgeCurve={setEdgeCurve}
+                spacing={spacing}
+                setSpacing={setSpacing}
+                layoutDirection={layoutDirection}
+                setLayoutDirection={handleLayoutDirectionChange}
+                diagramType={diagramType}
+                onEditCode={onEditCode ? () => onEditCode(diagramCode!) : undefined}
+              />
+
+              {/* Zoom controls for Mermaid diagrams */}
+              <div data-diagram-download-hide className="absolute bottom-4 right-4 z-20 flex flex-col gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const svg = flowContainerRef.current?.querySelector("svg");
+                    if (!svg) return;
+                    const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
+                    const next = Math.min(cur + 0.15, 3);
+                    svg.style.transform = `scale(${next})`;
+                    svg.style.transformOrigin = "center center";
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
+                  title="Zoom in"
+                  aria-label="Zoom in"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const svg = flowContainerRef.current?.querySelector("svg");
+                    if (!svg) return;
+                    const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
+                    const next = Math.max(cur - 0.15, 0.3);
+                    svg.style.transform = `scale(${next})`;
+                    svg.style.transformOrigin = "center center";
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
+                  title="Zoom out"
+                  aria-label="Zoom out"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" /></svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const svg = flowContainerRef.current?.querySelector("svg");
+                    if (!svg) return;
+                    svg.style.transform = "scale(1)";
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-bold text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
+                  title="Reset zoom"
+                  aria-label="Reset zoom"
+                >
+                  1:1
+                </button>
+              </div>
+            </>
           )}
 
+
           {explanation && !showWelcome && (
-            <div data-diagram-download-hide className="absolute left-3 right-3 top-16 z-10 max-w-2xl rounded border border-[var(--border)] bg-[var(--card)]/95 px-3 py-2">
+            <div data-diagram-download-hide className={cn("absolute right-3 top-16 z-10 max-w-2xl rounded border border-[var(--border)] bg-[var(--card)]/95 px-3 py-2 transition-all duration-300", diagramControlsOpen ? "left-[270px]" : "left-3")}>
               <p className="text-xs font-medium text-[var(--primary)]">How it works</p>
               <p className="mt-0.5 text-sm text-[var(--foreground)]">{explanation}</p>
             </div>
           )}
 
           {!showWelcome && !diagramCode && !editingNode && (
-            <p data-diagram-download-hide className="absolute bottom-4 left-4 z-10 text-xs text-slate-500">
+            <p data-diagram-download-hide className={cn("absolute bottom-4 z-10 text-xs text-slate-500 transition-all duration-300", diagramControlsOpen ? "left-[270px]" : "left-4")}>
               Select a node, then click &quot;Edit text&quot; above — or double-click
             </p>
           )}
@@ -1199,19 +1351,56 @@ function CanvasInner() {
         newDiagramCount={newDiagramCount}
         diagramPlan={diagramPlan}
         diagramType={diagramType}
-        onGenerateLld={handleGenerateLld}
       />
 
       <KeyboardShortcutsHelp isOpen={showHelp} onClose={() => setShowHelp(false)} />
-    </div>
+
+      <SaveDiagramModal
+        isOpen={saveModalOpen}
+        onClose={() => setSaveModalOpen(false)}
+        onSaved={(id) => {
+          if (id) setSavedDiagramId(id);
+          toast.success("Diagram saved");
+          setSaveModalOpen(false);
+        }}
+        diagramType={diagramType}
+        diagramCode={diagramCode}
+        nodes={nodes}
+        edges={edges}
+        diagramPlan={diagramPlan}
+        diagramId={savedDiagramId}
+      />
+
+      <DiagramsListPanel
+        isOpen={diagramsPanelOpen}
+        onClose={() => setDiagramsPanelOpen(false)}
+        onLoad={handleLoadDiagram}
+      />
+
+      {/* Sign up modal for guest limit */}
+      <SignupModal
+        isOpen={signupOpen}
+        onClose={() => setSignupOpen(false)}
+        onSuccess={() => {
+          setSignupOpen(false);
+          window.dispatchEvent(new Event("auth-change"));
+        }}
+        onSwitchToLogin={() => {
+          setSignupOpen(false);
+          // Optional: Trigger login modal if needed, but for now just close signup
+        }}
+      />
+
+    </div >
   );
 }
 
 // Wrap with ReactFlowProvider to enable useReactFlow hook
-export default function Canvas() {
+// Wrap with ReactFlowProvider to enable useReactFlow hook
+export default function Canvas(props: CanvasProps) {
   return (
     <ReactFlowProvider>
-      <CanvasInner />
+      <CanvasInner {...props} />
     </ReactFlowProvider>
   );
 }

@@ -1,65 +1,32 @@
+"""
+RAG (Retrieval-Augmented Generation) for architecture best practices.
+Uses built-in context patterns - no external dependencies required.
+"""
 import logging
-import os
-from pinecone import Pinecone
 from typing import List
 
 logger = logging.getLogger("architectai.rag")
 
 
 class ArchitectureRetriever:
+    """
+    Provides architecture best-practice context for diagram generation.
+    Uses curated patterns and rules - 100% free, no API keys required.
+    """
+    
     def __init__(self):
-        self.api_key = os.getenv("PINECONE_API_KEY")
-        self.index_name = os.getenv("PINECONE_INDEX", "architect-ai-memory")
-        openai_key = os.getenv("OPENAI_API_KEY")
-        # Only use Pinecone when BOTH keys are set (embeddings need OpenAI, which is paid).
-        # Otherwise use built-in context — 100% free.
-        self.mock_mode = not (self.api_key and openai_key)
-
-        if not self.mock_mode:
-            try:
-                self.pc = Pinecone(api_key=self.api_key)
-                self.index = self.pc.Index(self.index_name)
-            except Exception as e:
-                logger.warning("Pinecone error: %s. Switching to mock mode.", e)
-                self.mock_mode = True
-        else:
-            logger.debug("RAG: using built-in context (free). Set PINECONE_API_KEY + OPENAI_API_KEY for vector RAG.")
+        logger.debug("RAG: using built-in architecture best practices (no external dependencies)")
 
     def search(self, query: str, top_k: int = 3) -> List[str]:
         """
-        Retrieves relevant architectural templates or rules based on the user prompt.
+        Returns relevant architectural patterns and rules based on the user prompt.
         """
-        if self.mock_mode:
-            return self._get_mock_context(query)
-        
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            
-            # Generate Embedding
-            response = client.embeddings.create(input=query, model="text-embedding-3-small")
-            query_embedding = response.data[0].embedding
-            
-            # Query Pinecone
-            results = self.index.query(vector=query_embedding, top_k=top_k, include_metadata=True)
-            
-            # Extract Text
-            matches = [match['metadata']['text'] for match in results['matches']]
-            
-            # Fallback if empty (cold start)
-            if not matches:
-                return self._get_mock_context(query)
-                
-            return matches
-            
-        except Exception as e:
-            logger.warning("Retrieval error: %s. Falling back to mock.", e)
-            return self._get_mock_context(query)
+        return self._get_context(query)
 
-    def _get_mock_context(self, query: str) -> List[str]:
+    def _get_context(self, query: str) -> List[str]:
         """
-        Returns architecture best-practice context (production-quality RAG fallback).
-        Used when Pinecone is not configured or retrieval fails.
+        Returns architecture best-practice context based on query keywords.
+        Production-quality patterns curated from industry standards.
         """
         q = query.lower()
         context: List[str] = []
@@ -102,5 +69,17 @@ class ArchitectureRetriever:
 
         if "monitoring" in q or "observability" in q or "logging" in q:
             context.append("Observability: Centralized logging and metrics (e.g. Prometheus + Grafana); trace IDs across services.")
+
+        if "payment" in q or "billing" in q or "stripe" in q:
+            context.append("Payments: Use a payment gateway (Stripe/PayPal); never store credit card data yourself (PCI compliance).")
+            context.append("Pattern: Client -> API -> Payment Gateway; use webhooks for async payment confirmations.")
+
+        if "cdn" in q or "static" in q or "frontend" in q:
+            context.append("Static Assets: Serve via CDN (CloudFront/Cloudflare) for global low-latency access.")
+            context.append("Frontend: Separate static frontend (S3+CDN) from dynamic API (load balanced servers).")
+
+        if "security" in q or "encryption" in q or "ssl" in q:
+            context.append("Security: Always use HTTPS/TLS; encrypt data at rest and in transit.")
+            context.append("Secrets: Use secret management (AWS Secrets Manager, HashiCorp Vault); never commit secrets to git.")
 
         return context
