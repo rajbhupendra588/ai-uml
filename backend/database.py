@@ -31,6 +31,23 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
+def _add_missing_user_columns(sync_conn):
+    """Add missing columns to users table (SQLite). Safe to run multiple times."""
+    from sqlalchemy import text
+    if "sqlite" not in DATABASE_URL:
+        return
+    for sql in [
+        "ALTER TABLE users ADD COLUMN tokens_used_this_month BIGINT DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN tokens_used_total BIGINT DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN razorpay_customer_id VARCHAR(100) NULL UNIQUE",
+    ]:
+        try:
+            sync_conn.execute(text(sql))
+        except Exception:
+            # Column already exists or table doesn't exist yet
+            pass
+
+
 async def init_db() -> None:
     """Create tables if they don't exist. For schema changes (e.g. auth migration),
     delete architectai.db and restart to recreate tables."""
@@ -38,3 +55,4 @@ async def init_db() -> None:
         # Import models so they are registered in metadata
         from models import user, diagram  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_add_missing_user_columns)

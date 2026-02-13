@@ -44,7 +44,11 @@ REPO_ANALYSIS_MAX_LENGTH = int(os.getenv("REPO_ANALYSIS_MAX_LENGTH", "25000"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./architectai.db")
+
+# Database: use Supabase Postgres when SUPABASE_DATABASE_URL is set (user/login persisted in Supabase)
+_SUPABASE_URL = os.getenv("SUPABASE_DATABASE_URL", "").strip()
+DATABASE_URL = _SUPABASE_URL or os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./architectai.db")
+USING_SUPABASE = bool(_SUPABASE_URL)
 
 # GitHub OAuth
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")

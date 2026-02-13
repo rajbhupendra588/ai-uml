@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { AuthProvider } from "@/components/AuthProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -48,19 +49,21 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased transition-colors duration-300`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased transition-colors duration-300`} suppressHydrationWarning>
         <ThemeProvider>
-          {children}
-          <Toaster
-            position="bottom-center"
-            toastOptions={{
-              classNames: {
-                toast: "!bg-[var(--card)] !border-[var(--border)] !text-[var(--card-foreground)]",
-                success: "!border-emerald-500/50",
-                error: "!border-red-500/50",
-              },
-            }}
-          />
+          <AuthProvider>
+            {children}
+            <Toaster
+              position="bottom-center"
+              toastOptions={{
+                classNames: {
+                  toast: "!bg-[var(--card)] !border-[var(--border)] !text-[var(--card-foreground)]",
+                  success: "!border-emerald-500/50",
+                  error: "!border-red-500/50",
+                },
+              }}
+            />
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

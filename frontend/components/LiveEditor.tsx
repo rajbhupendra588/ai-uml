@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MermaidDiagram, type DiagramTheme, DIAGRAM_THEMES } from "./MermaidDiagram";
 import { useTheme } from "./ThemeProvider";
 import { DiagramDownloadMenu } from "./DiagramDownloadMenu";
+import { DiagramZoomControls } from "./DiagramZoomControls";
 import { MERMAID_EXAMPLES } from "@/lib/examples";
 import {
     Copy,
@@ -19,6 +20,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { tokenizeMermaidCode, SYNTAX_COLORS } from "@/lib/mermaidSyntaxHighlight";
+
+
 
 export function LiveEditor({ initialCode }: { initialCode?: string }) {
     const { theme, toggleTheme } = useTheme();
@@ -84,7 +88,7 @@ export function LiveEditor({ initialCode }: { initialCode?: string }) {
 
                     <div className="h-6 w-px bg-[var(--border)]" />
 
-                    <div className="flex items-center gap-2">
+                    <div id="live-editor-examples" className="flex items-center gap-2">
                         <span className="text-xs font-medium text-[var(--muted-foreground)]">Example:</span>
                         <select
                             className="h-8 rounded-md border border-[var(--input)] bg-[var(--background)] px-2 text-sm text-[var(--foreground)] focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -97,7 +101,7 @@ export function LiveEditor({ initialCode }: { initialCode?: string }) {
                         </select>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div id="live-editor-autosync" className="flex items-center gap-2">
                         <label className="flex items-center gap-2 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer">
                             <input
                                 type="checkbox"
@@ -121,7 +125,7 @@ export function LiveEditor({ initialCode }: { initialCode?: string }) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                    {/* Styling Controls */}
+                    {/* ... existing styling controls ... */}
                     <div className="flex items-center gap-1 mr-2 rounded-lg border border-[var(--border)] bg-[var(--background)] p-1">
                         <button
                             onClick={() => setLook(prev => prev === "classic" ? "handDrawn" : "classic")}
@@ -245,22 +249,40 @@ export function LiveEditor({ initialCode }: { initialCode?: string }) {
             {/* Main Split Area */}
             <div className="flex flex-1 overflow-hidden">
                 {/* Editor Pane */}
-                <div className="flex w-1/3 min-w-[300px] max-w-[50%] flex-col border-r border-[var(--border)] bg-[var(--card)]">
+                <div id="live-editor-input" className="flex w-1/3 min-w-[300px] max-w-[50%] flex-col border-r border-[var(--border)] bg-[var(--card)]">
                     <div className="flex h-8 items-center bg-[var(--secondary)] px-4 text-xs font-medium text-[var(--muted-foreground)] border-b border-[var(--border)]">
                         MERMAID CODE
                     </div>
-                    <textarea
-                        ref={editorRef}
-                        value={code}
-                        onChange={(e) => setCode(e.target.value)}
-                        className="flex-1 resize-none bg-[var(--background)] p-4 font-mono text-sm leading-relaxed text-[var(--foreground)] focus:outline-none"
-                        spellCheck={false}
-                        placeholder="Enter Mermaid code here..."
-                    />
+                    <div className="flex-1 relative overflow-hidden">
+                        {/* Syntax highlighted overlay */}
+                        <div className="absolute inset-0 p-4 font-mono text-sm leading-relaxed pointer-events-none overflow-auto" style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>
+                            {tokenizeMermaidCode(code).map((token, i) => (
+                                <span
+                                    key={i}
+                                    style={{
+                                        color: theme === 'dark' ? SYNTAX_COLORS[token.type].dark : SYNTAX_COLORS[token.type].light,
+                                        fontWeight: token.type === 'keyword' ? 'bold' : 'normal',
+                                    }}
+                                >
+                                    {token.text}
+                                </span>
+                            ))}
+                        </div>
+                        {/* Actual textarea (transparent text) */}
+                        <textarea
+                            ref={editorRef}
+                            value={code}
+                            onChange={(e) => setCode(e.target.value)}
+                            className="absolute inset-0 resize-none bg-transparent p-4 font-mono text-sm leading-relaxed focus:outline-none caret-[var(--foreground)]"
+                            style={{ color: 'transparent', caretColor: 'var(--foreground)' }}
+                            spellCheck={false}
+                            placeholder="Enter Mermaid code here..."
+                        />
+                    </div>
                 </div>
 
                 {/* Preview Pane */}
-                <div className="flex flex-1 flex-col bg-[var(--background)] relative">
+                <div id="live-editor-preview" className="flex flex-1 flex-col bg-[var(--background)] relative">
                     <div className="flex h-8 items-center justify-between bg-[var(--secondary)] px-4 text-xs font-medium text-[var(--muted-foreground)] border-b border-[var(--border)]">
                         <span>PREVIEW</span>
                         {code !== debouncedCode && autoSync && (
@@ -270,7 +292,7 @@ export function LiveEditor({ initialCode }: { initialCode?: string }) {
                             </span>
                         )}
                     </div>
-                    <div className="flex-1 overflow-hidden bg-[var(--canvas)] p-0" ref={previewRef}>
+                    <div className="flex-1 overflow-hidden bg-[var(--canvas)] p-0 relative" ref={previewRef}>
                         <MermaidDiagram
                             code={debouncedCode}
                             className="h-full w-full"
@@ -279,6 +301,7 @@ export function LiveEditor({ initialCode }: { initialCode?: string }) {
                             diagramTheme={diagramTheme}
                             fontFamily={diagramFont}
                         />
+                        <DiagramZoomControls containerRef={previewRef} visible={!!debouncedCode?.trim()} />
                     </div>
                 </div>
             </div>

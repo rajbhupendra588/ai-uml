@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watermark Test - ArchitectAI</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    #testCanvas {
+      border: 2px solid #ccc;
+      margin: 20px 0;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Watermark Test</h1>
+  <p>This page tests the watermark functionality for free tier users.</p>
+  
+  <canvas id="testCanvas" width="800" height="600"></canvas>
+  
+  <div>
+    <button onclick="drawTestDiagram()">Draw Test Diagram</button>
+    <button onclick="downloadWithWatermark()">Download With Watermark (Free)</button>
+    <button onclick="downloadWithoutWatermark()">Download Without Watermark (Pro)</button>
+  </div>
+  
+  <div id="status" style="margin-top: 20px; padding: 10px; background: #f0f0f0;"></div>
+
+  <script>
+    // Draw a simple test diagram
+    function drawTestDiagram() {
+      const canvas = document.getElementById('testCanvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Clear canvas
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw some boxes (simulating a diagram)
+      ctx.fillStyle = '#3b82f6';
+      ctx.fillRect(50, 50, 200, 100);
+      ctx.fillStyle = '#10b981';
+      ctx.fillRect(300, 200, 200, 100);
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(550, 350, 200, 100);
+      
+      // Draw connections
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(150, 150);
+      ctx.lineTo(400, 250);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(400, 300);
+      ctx.lineTo(650, 400);
+      ctx.stroke();
+      
+      // Add text
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '20px Arial';
+      ctx.fillText('Service A', 80, 110);
+      ctx.fillText('Service B', 330, 260);
+      ctx.fillText('Service C', 580, 410);
+      
+      updateStatus('Test diagram drawn!');
+    }
+    
+    // Add watermark function (from our implementation)
+    async function addWatermarkToImage(imageBlob, watermarkText = "Created with ArchitectAI - Free Plan") {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(imageBlob);
+
+        img.onload = () => {
+          // Create canvas
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+
+          if (!ctx) {
+            reject(new Error("Could not get canvas context"));
+            return;
+          }
+
+          // Draw original image
+          ctx.drawImage(img, 0, 0);
+
+          // Add watermark
+          const fontSize = Math.max(img.height / 30, 14);
+          ctx.font = `${fontSize}px Arial, sans-serif`;
+          ctx.fillStyle = "rgba(128, 128, 128, 0.3)";
+          ctx.textAlign = "right";
+          ctx.textBaseline = "bottom";
+
+          // Position at bottom-right corner with margin
+          const margin = 20;
+          const x = img.width - margin;
+          const y = img.height - margin;
+
+          ctx.fillText(watermarkText, x, y);
+
+          // Convert canvas to blob
+          canvas.toBlob(
+            (blob) => {
+              URL.revokeObjectURL(url);
+              if (blob) {
+                resolve(blob);
+              } else {
+                reject(new Error("Failed to create watermarked image"));
+              }
+            },
+            "image/png",
+            1.0
+          );
+        };
+
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Failed to load image"));
+        };
+
+        img.src = url;
+      });
+    }
+    
+    async function downloadWithWatermark() {
+      try {
+        const canvas = document.getElementById('testCanvas');
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 1.0));
+        
+        // Add watermark
+        const watermarkedBlob = await addWatermarkToImage(blob);
+        
+        // Download
+        const url = URL.createObjectURL(watermarkedBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'test-diagram-free.png';
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        updateStatus('Downloaded with watermark! Check your downloads folder.');
+      } catch (err) {
+        updateStatus('Error: ' + err.message, true);
+      }
+    }
+    
+    async function downloadWithoutWatermark() {
+      try {
+        const canvas = document.getElementById('testCanvas');
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 1.0));
+        
+        // Download without watermark (Pro user simulation)
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'test-diagram-pro.png';
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        updateStatus('Downloaded without watermark (Pro simulation)! Check your downloads folder.');
+      } catch (err) {
+        updateStatus('Error: ' + err.message, true);
+      }
+    }
+    
+    function updateStatus(message, isError = false) {
+      const statusDiv = document.getElementById('status');
+      statusDiv.textContent = message;
+      statusDiv.style.background = isError ? '#fee2e2' : '#d1fae5';
+      statusDiv.style.color = isError ? '#991b1b' : '#065f46';
+    }
+    
+    // Draw diagram on load
+    window.onload = drawTestDiagram;
+  </script>
+</body>
+</html>

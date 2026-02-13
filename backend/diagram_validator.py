@@ -37,12 +37,28 @@ class ValidationResult:
     repaired: dict | None = None  # If not None, use this instead of original when invalid
 
 
+# Max length for code/snippet in plan (sanitized before storage)
+MAX_CODE_LENGTH = 10000
+
+
 def _truncate_string(s: Any, max_len: int = 80) -> str:
     """Safely stringify and truncate for error messages."""
     if s is None:
         return "null"
     t = str(s).strip()
     return t[:max_len] + "..." if len(t) > max_len else t
+
+
+def _sanitize_code(code: Any) -> str | None:
+    """Sanitize optional code/snippet: strip, truncate, remove null bytes."""
+    if code is None or (isinstance(code, str) and not code.strip()):
+        return None
+    t = str(code).strip()
+    if not t:
+        return None
+    # Remove null bytes and control chars
+    t = "".join(c for c in t if ord(c) >= 32 or c in "\n\t\r")
+    return t[:MAX_CODE_LENGTH] if len(t) > MAX_CODE_LENGTH else t
 
 
 def _ensure_list(obj: Any, key: str, default: list | None = None) -> list:
@@ -78,7 +94,11 @@ def validate_architecture(plan: dict) -> ValidationResult:
         ctype = (comp.get("type") or "server").strip().lower()
         if ctype not in ARCHITECTURE_TYPES:
             ctype = "server"
-        repaired_components.append({"name": name[:60], "type": ctype})
+        item: dict = {"name": name[:60], "type": ctype}
+        code_val = _sanitize_code(comp.get("code") or comp.get("snippet"))
+        if code_val:
+            item["code"] = code_val
+        repaired_components.append(item)
 
     if errors and not repaired_components:
         return ValidationResult(is_valid=False, errors=errors)
@@ -111,7 +131,11 @@ def validate_hld(plan: dict) -> ValidationResult:
                 if isinstance(item, dict):
                     name = (item.get("name") or "").strip() or f"Item_{j}"
                     t = (item.get("type") or "service").strip().lower()
-                    repaired_layers[key].append({"name": name[:50], "type": t, "tech": (item.get("tech") or "")[:40]})
+                    layer_item: dict = {"name": name[:50], "type": t, "tech": (item.get("tech") or "")[:40]}
+                    code_val = _sanitize_code(item.get("code") or item.get("snippet"))
+                    if code_val:
+                        layer_item["code"] = code_val
+                    repaired_layers[key].append(layer_item)
                 else:
                     repaired_layers[key].append({"name": f"Component_{j}", "type": "service", "tech": ""})
         else:
@@ -159,11 +183,15 @@ def validate_class(plan: dict) -> ValidationResult:
         attrs = (attrs[:8] if isinstance(attrs, list) else [])
         methods = c.get("methods")
         methods = (methods[:8] if isinstance(methods, list) else [])
-        repaired_classes.append({
+        class_item: dict = {
             "name": name[:50],
             "attributes": [str(a)[:60] for a in attrs],
             "methods": [str(m)[:60] for m in methods],
-        })
+        }
+        code_val = _sanitize_code(c.get("code") or c.get("snippet"))
+        if code_val:
+            class_item["code"] = code_val
+        repaired_classes.append(class_item)
 
     if not repaired_classes:
         errors.append("No valid classes")
@@ -210,7 +238,11 @@ def validate_sequence(plan: dict) -> ValidationResult:
         if not pid:
             pid = f"P{i}"
         ids.add(pid)
-        repaired_participants.append({"id": pid, "name": (p.get("name") or pid)[:40]})
+        seq_item: dict = {"id": pid, "name": (p.get("name") or pid)[:40]}
+        code_val = _sanitize_code(p.get("code") or p.get("snippet"))
+        if code_val:
+            seq_item["code"] = code_val
+        repaired_participants.append(seq_item)
 
     if not repaired_participants:
         errors.append("No valid participants")
@@ -264,7 +296,11 @@ def validate_usecase(plan: dict) -> ValidationResult:
         if not aid:
             aid = f"a{i}"
         actor_ids.add(aid)
-        repaired_actors.append({"id": aid, "name": (a.get("name") or aid)[:40]})
+        actor_item: dict = {"id": aid, "name": (a.get("name") or aid)[:40]}
+        code_val = _sanitize_code(a.get("code") or a.get("snippet"))
+        if code_val:
+            actor_item["code"] = code_val
+        repaired_actors.append(actor_item)
 
     uc_ids = set()
     repaired_ucs = []
@@ -275,7 +311,11 @@ def validate_usecase(plan: dict) -> ValidationResult:
         if not ucid:
             ucid = f"uc{i}"
         uc_ids.add(ucid)
-        repaired_ucs.append({"id": ucid, "name": (uc.get("name") or ucid)[:40]})
+        uc_item: dict = {"id": ucid, "name": (uc.get("name") or ucid)[:40]}
+        code_val = _sanitize_code(uc.get("code") or uc.get("snippet"))
+        if code_val:
+            uc_item["code"] = code_val
+        repaired_ucs.append(uc_item)
 
     if not repaired_actors:
         repaired_actors = [{"id": "a1", "name": "User"}]
@@ -358,7 +398,11 @@ def validate_activity(plan: dict) -> ValidationResult:
             has_start = True
         if ntype == "end":
             has_end = True
-        repaired_nodes.append({"id": nid, "type": ntype, "label": (n.get("label") or nid)[:50]})
+        node_item: dict = {"id": nid, "type": ntype, "label": (n.get("label") or nid)[:50]}
+        code_val = _sanitize_code(n.get("code") or n.get("snippet"))
+        if code_val:
+            node_item["code"] = code_val
+        repaired_nodes.append(node_item)
 
     if not repaired_nodes:
         repaired_nodes = [
@@ -418,12 +462,16 @@ def validate_state(plan: dict) -> ValidationResult:
         initial = bool(s.get("isInitial"))
         if initial:
             has_initial = True
-        repaired_states.append({
+        state_item: dict = {
             "id": sid,
             "name": (s.get("name") or sid)[:40],
             "isInitial": initial,
             "isFinal": bool(s.get("isFinal")),
-        })
+        }
+        code_val = _sanitize_code(s.get("code") or s.get("snippet"))
+        if code_val:
+            state_item["code"] = code_val
+        repaired_states.append(state_item)
 
     if not repaired_states:
         repaired_states = [
@@ -474,7 +522,11 @@ def validate_component(plan: dict) -> ValidationResult:
         if not cid:
             cid = f"c{i}"
         comp_ids.add(cid)
-        repaired_comps.append({"id": cid, "name": (c.get("name") or cid)[:40]})
+        comp_item: dict = {"id": cid, "name": (c.get("name") or cid)[:40]}
+        code_val = _sanitize_code(c.get("code") or c.get("snippet"))
+        if code_val:
+            comp_item["code"] = code_val
+        repaired_comps.append(comp_item)
 
     if not repaired_comps:
         repaired_comps = [{"id": "c1", "name": "API"}, {"id": "c2", "name": "DB"}]
@@ -525,12 +577,16 @@ def validate_deployment(plan: dict) -> ValidationResult:
         ntype = (n.get("type") or "executionEnv").strip().lower()
         if ntype not in DEPLOYMENT_NODE_TYPES:
             ntype = "executionEnv"
-        repaired_nodes.append({
+        depl_node: dict = {
             "id": nid,
             "name": (n.get("name") or nid)[:40],
             "type": ntype,
             "description": (n.get("description") or "")[:80],
-        })
+        }
+        code_val = _sanitize_code(n.get("code") or n.get("snippet"))
+        if code_val:
+            depl_node["code"] = code_val
+        repaired_nodes.append(depl_node)
 
     if not repaired_nodes:
         repaired_nodes = [
@@ -549,12 +605,16 @@ def validate_deployment(plan: dict) -> ValidationResult:
         node_id = (a.get("nodeId") or "").strip()[:30]
         if node_id and node_id not in node_ids:
             node_id = list(node_ids)[0] if node_ids else ""
-        repaired_artifacts.append({
+        artifact_item: dict = {
             "id": aid,
             "name": (a.get("name") or aid)[:40],
             "nodeId": node_id,
             "description": (a.get("description") or "")[:80],
-        })
+        }
+        code_val = _sanitize_code(a.get("code") or a.get("snippet"))
+        if code_val:
+            artifact_item["code"] = code_val
+        repaired_artifacts.append(artifact_item)
 
     repaired_conns = []
     for i, c in enumerate(connections):
@@ -596,11 +656,15 @@ def validate_mindtree(plan: dict) -> ValidationResult:
         if not nid:
             nid = f"n{i}"
         node_ids.add(nid)
-        repaired_nodes.append({
+        mind_node: dict = {
             "id": nid,
             "label": (n.get("label") or nid)[:50],
             "parentId": (n.get("parentId") or "").strip()[:30]
-        })
+        }
+        code_val = _sanitize_code(n.get("code") or n.get("snippet"))
+        if code_val:
+            mind_node["code"] = code_val
+        repaired_nodes.append(mind_node)
 
     # Ensure root exists
     if not root_id or root_id not in node_ids:

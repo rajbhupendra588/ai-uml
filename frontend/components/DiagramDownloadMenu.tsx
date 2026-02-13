@@ -4,7 +4,7 @@ import React, { useCallback, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { toPng, toSvg } from "html-to-image";
 import { jsPDF } from "jspdf";
-import { Download, FileImage, FileJson, FileType, ImageIcon } from "lucide-react";
+import { Download, FileImage, FileJson, FileType, ImageIcon, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,9 @@ import {
   downloadString,
   type DiagramType,
 } from "@/lib/download";
+import { getShareUrl } from "@/lib/api";
 import type { Node, Edge } from "@xyflow/react";
+import { addWatermarkToImage, shouldAddWatermark } from "@/lib/watermark";
 
 const IMAGE_SCALE = 2;
 const IMAGE_QUALITY = 1;
@@ -41,6 +43,8 @@ export interface DiagramDownloadMenuProps {
   /** When set, menu open state is controlled by parent (e.g. for keyboard shortcut). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** User's plan (for watermark logic) */
+  userPlan?: string;
 }
 
 export function DiagramDownloadMenu({
@@ -54,6 +58,7 @@ export function DiagramDownloadMenu({
   className,
   open: controlledOpen,
   onOpenChange: controlledSetOpen,
+  userPlan,
 }: DiagramDownloadMenuProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -87,7 +92,7 @@ export function DiagramDownloadMenu({
       }
       // Small delay to ensure SVG is fully rendered
       await new Promise((r) => setTimeout(r, 100));
-      
+
       const dataUrl = await toPng(el, {
         cacheBust: true,
         pixelRatio: IMAGE_SCALE,
@@ -101,11 +106,19 @@ export function DiagramDownloadMenu({
         },
       });
       const res = await fetch(dataUrl);
-      const blob = await res.blob();
+      let blob = await res.blob();
+
+      // Add watermark for free tier users
+      if (shouldAddWatermark(userPlan)) {
+        blob = await addWatermarkToImage(blob);
+        toast.success("Diagram downloaded as PNG (with watermark)");
+      } else {
+        toast.success("Diagram downloaded as PNG");
+      }
+
       downloadBlob(blob, getDownloadFilename("png", diagramType));
-      toast.success("Diagram downloaded as PNG");
     });
-  }, [containerRef, diagramType, runExport]);
+  }, [containerRef, diagramType, runExport, userPlan]);
 
   const handleDownloadSvg = useCallback(() => {
     runExport(async () => {
@@ -115,7 +128,7 @@ export function DiagramDownloadMenu({
       }
       // Small delay to ensure SVG is fully rendered
       await new Promise((r) => setTimeout(r, 100));
-      
+
       const dataUrl = await toSvg(el, {
         cacheBust: true,
         backgroundColor: "#020617",
@@ -127,11 +140,34 @@ export function DiagramDownloadMenu({
         },
       });
       const res = await fetch(dataUrl);
-      const blob = await res.blob();
+      let blob = await res.blob();
+
+      // Add watermark for free tier users by converting to PNG with watermark
+      if (shouldAddWatermark(userPlan)) {
+        // Use toPng directly to avoid canvas tainting issues
+        const pngDataUrl = await toPng(el, {
+          cacheBust: true,
+          pixelRatio: IMAGE_SCALE,
+          quality: IMAGE_QUALITY,
+          backgroundColor: "#020617",
+          skipFonts: true,
+          filter: (node) => {
+            if (node instanceof HTMLLinkElement && node.href?.includes('fonts.googleapis.com')) return false;
+            if (node instanceof HTMLElement && node.closest?.('[data-diagram-download-hide]')) return false;
+            return true;
+          },
+        });
+        const res = await fetch(pngDataUrl);
+        const pngBlob = await res.blob();
+        blob = await addWatermarkToImage(pngBlob);
+        toast.success("Diagram downloaded as PNG (with watermark)");
+      } else {
+        toast.success("Diagram downloaded as SVG");
+      }
+
       downloadBlob(blob, getDownloadFilename("svg", diagramType));
-      toast.success("Diagram downloaded as SVG");
     });
-  }, [containerRef, diagramType, runExport]);
+  }, [containerRef, diagramType, runExport, userPlan]);
 
   const handleDownloadPdf = useCallback(() => {
     runExport(async () => {
@@ -141,8 +177,8 @@ export function DiagramDownloadMenu({
       }
       // Small delay to ensure SVG is fully rendered (important for Mermaid diagrams)
       await new Promise((r) => setTimeout(r, 100));
-      
-      const dataUrl = await toPng(el, {
+
+      let dataUrl = await toPng(el, {
         cacheBust: true,
         pixelRatio: PDF_IMAGE_SCALE,
         quality: IMAGE_QUALITY,
@@ -154,6 +190,21 @@ export function DiagramDownloadMenu({
           return true;
         },
       });
+
+      // Add watermark for free tier users
+      if (shouldAddWatermark(userPlan)) {
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        const watermarkedBlob = await addWatermarkToImage(blob);
+        // Convert watermarked blob back to data URL
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("Failed to read watermarked image"));
+          reader.readAsDataURL(watermarkedBlob);
+        });
+      }
+
       const img = document.createElement("img");
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
@@ -162,12 +213,12 @@ export function DiagramDownloadMenu({
       });
       const w = img.naturalWidth;
       const h = img.naturalHeight;
-      
+
       // Ensure minimum dimensions
       if (w < 10 || h < 10) {
         throw new Error("Diagram appears empty. Please ensure the diagram is fully rendered.");
       }
-      
+
       const pdf = new jsPDF({
         orientation: w > h ? "landscape" : "portrait",
         unit: "px",
@@ -175,9 +226,38 @@ export function DiagramDownloadMenu({
       });
       pdf.addImage(dataUrl, "PNG", 0, 0, w, h);
       pdf.save(getDownloadFilename("pdf", diagramType));
-      toast.success("Diagram downloaded as PDF");
+
+      if (shouldAddWatermark(userPlan)) {
+        toast.success("Diagram downloaded as PDF (with watermark)");
+      } else {
+        toast.success("Diagram downloaded as PDF");
+      }
     });
-  }, [containerRef, diagramType, runExport]);
+  }, [containerRef, diagramType, runExport, userPlan]);
+
+  const handleShareLink = useCallback(async () => {
+    if (!diagramCode || busy) return;
+    setBusy(true);
+    try {
+      const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetch(getShareUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mermaid_code: diagramCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Share failed");
+      const shareUrl = data.share_url || `${baseUrl}/share/${data.share_id}`;
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success("Share link copied to clipboard");
+      setOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Share failed";
+      toast.error(msg);
+    } finally {
+      setBusy(false);
+    }
+  }, [diagramCode, busy]);
 
   const handleDownloadJson = useCallback(() => {
     if (busy) return;
@@ -212,7 +292,7 @@ export function DiagramDownloadMenu({
 
   return (
     <div className={cn("flex gap-2", className)} data-diagram-download-hide>
-        <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+      <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger asChild>
           <button
             type="button"
@@ -259,6 +339,16 @@ export function DiagramDownloadMenu({
               PDF document
             </DropdownMenu.Item>
             <DropdownMenu.Separator className="my-1 h-px bg-slate-600/80" />
+            {diagramCode && (
+              <DropdownMenu.Item
+                onSelect={handleShareLink}
+                disabled={busy}
+                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+              >
+                <Link2 className="size-4 shrink-0 text-slate-400" />
+                Share link
+              </DropdownMenu.Item>
+            )}
             <DropdownMenu.Item
               onSelect={handleDownloadJson}
               disabled={busy}

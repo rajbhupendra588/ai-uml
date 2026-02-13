@@ -50,12 +50,12 @@ export function EditNodePanel({ node, onSave, onCancel, className }: EditNodePan
   return (
     <div
       className={cn(
-        "absolute bottom-4 left-4 z-50 w-full max-w-sm rounded-xl border border-slate-700/80 bg-slate-800/98 shadow-xl",
+        "absolute bottom-4 left-4 z-50 w-full max-w-sm max-h-[calc(100vh-6rem)] rounded-xl border border-slate-700/80 bg-slate-800/98 shadow-xl flex flex-col overflow-hidden",
         className
       )}
       data-diagram-download-hide
     >
-      <div className="flex items-center justify-between border-b border-slate-700/80 px-4 py-2.5">
+      <div className="flex shrink-0 items-center justify-between border-b border-slate-700/80 px-4 py-2.5">
         <h3 className="text-sm font-semibold text-slate-200">Edit node</h3>
         <button
           type="button"
@@ -66,7 +66,7 @@ export function EditNodePanel({ node, onSave, onCancel, className }: EditNodePan
           <X className="size-4" />
         </button>
       </div>
-      <div className="flex flex-col gap-3 p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 p-4">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-400">Label</label>
           <Input
@@ -111,7 +111,7 @@ export function EditNodePanel({ node, onSave, onCancel, className }: EditNodePan
             </div>
           </>
         )}
-        <div className="flex gap-2 pt-1">
+        <div className="flex shrink-0 gap-2 pt-1">
           <Button
             type="button"
             variant="outline"

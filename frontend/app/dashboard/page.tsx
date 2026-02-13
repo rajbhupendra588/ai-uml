@@ -1,0 +1,840 @@
+"use client";
+
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import {
+    User,
+    BarChart3,
+    FileCode2,
+    Settings,
+    CreditCard,
+    ChevronRight,
+    TrendingUp,
+    Calendar,
+    Clock,
+    Zap,
+    Crown,
+    LogOut,
+    ArrowLeft,
+    Edit3,
+    Trash2,
+    Lock,
+    Mail,
+    CheckCircle2,
+    AlertCircle,
+    Loader2,
+    Coins,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+    fetchDashboardOverview,
+    updateProfile,
+    updatePassword,
+    deleteAccount,
+    PLAN_INFO,
+    type DashboardOverview,
+} from "@/lib/dashboard";
+import { type PlanType } from "@/lib/subscription";
+import { clearToken, getToken } from "@/lib/auth";
+import { toast } from "sonner";
+
+type Tab = "overview" | "diagrams" | "settings" | "billing";
+
+export default function DashboardPage() {
+    return (
+        <Suspense
+            fallback={
+                <div className="flex h-screen items-center justify-center bg-[var(--background)]">
+                    <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
+                </div>
+            }
+        >
+            <DashboardContent />
+        </Suspense>
+    );
+}
+
+function DashboardContent() {
+    const searchParams = useSearchParams();
+    const tabFromUrl = searchParams.get("tab") as Tab | null;
+    const [activeTab, setActiveTab] = useState<Tab>(tabFromUrl || "overview");
+    const [data, setData] = useState<DashboardOverview | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    // Update tab when URL changes
+    useEffect(() => {
+        if (
+            tabFromUrl &&
+            ["overview", "diagrams", "settings", "billing"].includes(tabFromUrl)
+        ) {
+            setActiveTab(tabFromUrl);
+        }
+    }, [tabFromUrl]);
+
+    useEffect(() => {
+        const token = getToken();
+        if (!token) {
+            window.location.href = "/";
+            return;
+        }
+
+        fetchDashboardOverview()
+            .then((d) => {
+                if (!d) {
+                    setError("Please log in to view your dashboard");
+                    return;
+                }
+                setData(d);
+            })
+            .catch((e) => setError(e.message))
+            .finally(() => setLoading(false));
+    }, []);
+
+    if (loading) {
+        return (
+            <div className="flex h-screen items-center justify-center bg-[var(--background)]">
+                <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
+            </div>
+        );
+    }
+
+    if (error || !data) {
+        return (
+            <div className="flex h-screen flex-col items-center justify-center gap-4 bg-[var(--background)] text-[var(--foreground)]">
+                <AlertCircle className="h-12 w-12 text-red-400" />
+                <p className="text-lg">{error || "Failed to load dashboard"}</p>
+                <Link
+                    href="/"
+                    className="flex items-center gap-2 text-[var(--primary)] hover:opacity-80"
+                >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back to Home
+                </Link>
+            </div>
+        );
+    }
+
+    const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+        { id: "overview", label: "Overview", icon: <BarChart3 className="h-4 w-4" /> },
+        { id: "diagrams", label: "My Diagrams", icon: <FileCode2 className="h-4 w-4" /> },
+        { id: "settings", label: "Settings", icon: <Settings className="h-4 w-4" /> },
+        { id: "billing", label: "Billing", icon: <CreditCard className="h-4 w-4" /> },
+    ];
+
+    return (
+        <div className="fixed inset-0 flex bg-[var(--background)] overflow-hidden" style={{ height: "100dvh" }}>
+            {/* Sidebar */}
+            <aside className="flex w-[240px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--card)] overflow-hidden">
+                {/* Logo */}
+                <div className="flex h-14 items-center gap-2.5 border-b border-[var(--border)] px-4 shrink-0">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)]/20">
+                        <Zap className="h-4 w-4 text-[var(--primary)]" />
+                    </div>
+                    <span className="text-base font-semibold text-[var(--foreground)]">
+                        ArchitectAI
+                    </span>
+                </div>
+
+                {/* User Info */}
+                <div className="border-b border-[var(--border)] p-3 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[var(--primary)] to-purple-600 text-white text-sm font-semibold">
+                            {data.user.username?.[0]?.toUpperCase() ||
+                                data.user.email[0].toUpperCase()}
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                            <p className="truncate text-sm font-medium text-[var(--foreground)]">
+                                {data.user.username || data.user.email.split("@")[0]}
+                            </p>
+                            <p className="truncate text-xs text-[var(--muted)]">
+                                {data.user.email}
+                            </p>
+                        </div>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                        <span
+                            className={cn(
+                                "rounded-full px-2 py-0.5 text-xs font-medium",
+                                data.user.plan === "pro"
+                                    ? "bg-[var(--primary)]/20 text-[var(--primary)]"
+                                    : data.user.plan === "team"
+                                        ? "bg-violet-500/20 text-violet-400"
+                                        : "bg-[var(--secondary)] text-[var(--muted)]"
+                            )}
+                        >
+                            {PLAN_INFO[data.user.plan]?.name || "Free"}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Navigation */}
+                <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
+                    {tabs.map((tab) => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={cn(
+                                "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+                                activeTab === tab.id
+                                    ? "bg-[var(--primary)]/10 text-[var(--primary)]"
+                                    : "text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+                            )}
+                        >
+                            {tab.icon}
+                            {tab.label}
+                        </button>
+                    ))}
+                </nav>
+
+                {/* Bottom Actions */}
+                <div className="border-t border-[var(--border)] p-3 space-y-1 shrink-0">
+                    <Link
+                        href="/"
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition-all"
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                        Back to App
+                    </Link>
+                    <button
+                        onClick={() => {
+                            clearToken();
+                            window.location.href = "/";
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-red-400 hover:bg-red-500/10 transition-all"
+                    >
+                        <LogOut className="h-4 w-4" />
+                        Sign Out
+                    </button>
+                </div>
+            </aside>
+
+            {/* Main Content - scrollable area; use div to avoid global main styles */}
+            <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden" role="main">
+                <div
+                    className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6"
+                    style={{ WebkitOverflowScrolling: "touch" }}
+                >
+                    <div className="max-w-6xl mx-auto w-full pb-12">
+                        {activeTab === "overview" && <OverviewTab data={data} />}
+                        {activeTab === "diagrams" && (
+                            <DiagramsTab diagrams={data.recent_diagrams} />
+                        )}
+                        {activeTab === "settings" && (
+                            <SettingsTab user={data.user} onUpdate={setData} />
+                        )}
+                        {activeTab === "billing" && (
+                            <BillingTab user={data.user} stats={data.stats} onUpdate={setData} />
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// --- Format number helper ---
+function formatNumber(num: number): string {
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+    return num.toString();
+}
+
+// --- Overview Tab ---
+function OverviewTab({ data }: { data: DashboardOverview }) {
+    const { stats, user, recent_diagrams } = data;
+
+    const statCards = [
+        {
+            label: "Diagrams This Month",
+            value: stats.diagrams_this_month,
+            subtext: `of ${stats.plan_limit} limit`,
+            icon: <Calendar className="h-5 w-5" />,
+            color: "primary",
+        },
+        {
+            label: "Total Diagrams",
+            value: stats.diagrams_total,
+            icon: <FileCode2 className="h-5 w-5" />,
+            color: "violet",
+        },
+        {
+            label: "Tokens Used",
+            value: formatNumber(stats.tokens_used_this_month || 0),
+            subtext: `of ${formatNumber(stats.token_limit || 50000)} limit`,
+            icon: <Coins className="h-5 w-5" />,
+            color: "amber",
+        },
+        {
+            label: "Member Since",
+            value: user.created_at
+                ? new Date(user.created_at).toLocaleDateString("en-US", {
+                    month: "short",
+                    year: "numeric",
+                })
+                : "N/A",
+            icon: <Clock className="h-5 w-5" />,
+            color: "emerald",
+        },
+    ];
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h1 className="text-2xl font-bold text-[var(--foreground)]">Dashboard</h1>
+                <p className="mt-1 text-[var(--muted)]">
+                    Welcome back, {user.username || user.email.split("@")[0]}!
+                </p>
+            </div>
+
+            {/* Stats Grid */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {statCards.map((card, i) => (
+                    <div
+                        key={i}
+                        className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-[var(--muted)]">
+                                {card.label}
+                            </span>
+                            <div
+                                className={cn(
+                                    "flex h-8 w-8 items-center justify-center rounded-lg",
+                                    card.color === "primary" &&
+                                    "bg-[var(--primary)]/20 text-[var(--primary)]",
+                                    card.color === "violet" && "bg-violet-500/20 text-violet-400",
+                                    card.color === "emerald" && "bg-emerald-500/20 text-emerald-400",
+                                    card.color === "amber" && "bg-amber-500/20 text-amber-400"
+                                )}
+                            >
+                                {card.icon}
+                            </div>
+                        </div>
+                        <p className="mt-2 text-2xl font-bold text-[var(--foreground)]">
+                            {card.value}
+                        </p>
+                        {card.subtext && (
+                            <p className="text-xs text-[var(--muted)]">{card.subtext}</p>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            {/* Usage Progress Bars */}
+            <div className="grid gap-4 lg:grid-cols-2">
+                {/* Diagram Usage */}
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-[var(--foreground)]">
+                            Monthly Diagram Usage
+                        </h3>
+                        <span className="text-xs text-[var(--muted)]">
+                            {stats.diagrams_this_month} / {stats.plan_limit}
+                        </span>
+                    </div>
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--secondary)]">
+                        <div
+                            className={cn(
+                                "h-full rounded-full transition-all duration-500",
+                                stats.plan_used_percent > 80
+                                    ? "bg-gradient-to-r from-red-500 to-orange-500"
+                                    : "bg-gradient-to-r from-[var(--primary)] to-purple-500"
+                            )}
+                            style={{ width: `${Math.min(100, stats.plan_used_percent)}%` }}
+                        />
+                    </div>
+                    {stats.plan_used_percent > 80 && (
+                        <p className="mt-2 text-xs text-amber-400">
+                            ⚠️ Approaching monthly limit
+                        </p>
+                    )}
+                </div>
+
+                {/* Token Usage */}
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-[var(--foreground)]">
+                            Monthly Token Usage
+                        </h3>
+                        <span className="text-xs text-[var(--muted)]">
+                            {formatNumber(stats.tokens_used_this_month || 0)} /{" "}
+                            {formatNumber(stats.token_limit || 50000)}
+                        </span>
+                    </div>
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--secondary)]">
+                        <div
+                            className={cn(
+                                "h-full rounded-full transition-all duration-500",
+                                (stats.token_used_percent || 0) > 80
+                                    ? "bg-gradient-to-r from-red-500 to-orange-500"
+                                    : "bg-gradient-to-r from-amber-500 to-orange-400"
+                            )}
+                            style={{ width: `${Math.min(100, stats.token_used_percent || 0)}%` }}
+                        />
+                    </div>
+                    <p className="mt-2 text-xs text-[var(--muted)]">
+                        Total tokens used: {formatNumber(stats.tokens_used_total || 0)}
+                    </p>
+                </div>
+            </div>
+
+            {/* Diagram Types Breakdown */}
+            {Object.keys(stats.diagrams_by_type || {}).length > 0 && (
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                    <h3 className="mb-4 text-sm font-semibold text-[var(--foreground)]">
+                        Diagrams by Type
+                    </h3>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {Object.entries(stats.diagrams_by_type).map(([type, count]) => (
+                            <div
+                                key={type}
+                                className="flex items-center justify-between rounded-lg bg-[var(--secondary)] p-3"
+                            >
+                                <span className="text-sm font-medium capitalize text-[var(--foreground)]">
+                                    {type.replace("_", " ")}
+                                </span>
+                                <span className="text-sm font-bold text-[var(--primary)]">
+                                    {count}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Recent Diagrams */}
+            {recent_diagrams.length > 0 && (
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-semibold text-[var(--foreground)]">
+                            Recent Diagrams
+                        </h3>
+                        <button
+                            onClick={() => { }}
+                            className="text-xs text-[var(--primary)] hover:opacity-80 flex items-center gap-1"
+                        >
+                            View All <ChevronRight className="h-3 w-3" />
+                        </button>
+                    </div>
+                    <div className="space-y-2">
+                        {recent_diagrams.slice(0, 5).map((diagram) => (
+                            <div
+                                key={diagram.id}
+                                className="flex items-center justify-between rounded-lg bg-[var(--secondary)] p-3 hover:bg-[var(--accent)] transition-colors cursor-pointer"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)]/20">
+                                        <FileCode2 className="h-4 w-4 text-[var(--primary)]" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-[var(--foreground)]">
+                                            {diagram.title}
+                                        </p>
+                                        <p className="text-xs text-[var(--muted)]">
+                                            {diagram.diagram_type || "Unknown"} •{" "}
+                                            {diagram.updated_at
+                                                ? new Date(diagram.updated_at).toLocaleDateString()
+                                                : "N/A"}
+                                        </p>
+                                    </div>
+                                </div>
+                                <ChevronRight className="h-4 w-4 text-[var(--muted)]" />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// --- Diagrams Tab ---
+function DiagramsTab({
+    diagrams,
+}: {
+    diagrams: DashboardOverview["recent_diagrams"];
+}) {
+    return (
+        <div className="space-y-6">
+            <div className="flex items-center justify-between">
+                <h1 className="text-2xl font-bold text-[var(--foreground)]">My Diagrams</h1>
+                <Link
+                    href="/"
+                    className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-colors"
+                >
+                    <Zap className="h-4 w-4" />
+                    Create New
+                </Link>
+            </div>
+
+            {diagrams.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--card)] p-12 text-center">
+                    <FileCode2 className="h-12 w-12 text-[var(--muted)] mb-4" />
+                    <p className="text-lg font-medium text-[var(--foreground)]">
+                        No diagrams yet
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--muted)]">
+                        Create your first diagram to see it here
+                    </p>
+                    <Link
+                        href="/"
+                        className="mt-6 flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-colors"
+                    >
+                        Get Started
+                    </Link>
+                </div>
+            ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {diagrams.map((diagram) => (
+                        <div
+                            key={diagram.id}
+                            className="group rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 hover:border-[var(--primary)]/30 transition-all cursor-pointer"
+                        >
+                            <div className="flex items-start justify-between">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--primary)]/20">
+                                    <FileCode2 className="h-5 w-5 text-[var(--primary)]" />
+                                </div>
+                                <button className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-[var(--secondary)]">
+                                    <Trash2 className="h-4 w-4 text-[var(--muted)] hover:text-red-400" />
+                                </button>
+                            </div>
+                            <h3 className="mt-3 text-sm font-medium text-[var(--foreground)] truncate">
+                                {diagram.title}
+                            </h3>
+                            <p className="mt-1 text-xs text-[var(--muted)]">
+                                {diagram.diagram_type || "Unknown type"}
+                            </p>
+                            <p className="mt-2 text-xs text-[var(--muted)]">
+                                Updated{" "}
+                                {diagram.updated_at
+                                    ? new Date(diagram.updated_at).toLocaleDateString()
+                                    : "N/A"}
+                            </p>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// --- Settings Tab ---
+function SettingsTab({
+    user,
+    onUpdate,
+}: {
+    user: DashboardOverview["user"];
+    onUpdate: (d: DashboardOverview) => void;
+}) {
+    const [username, setUsername] = useState(user.username || "");
+    const [saving, setSaving] = useState(false);
+    const [currentPassword, setCurrentPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+    const [changingPassword, setChangingPassword] = useState(false);
+
+    const handleSaveProfile = async () => {
+        if (!username.trim()) return;
+        setSaving(true);
+        try {
+            await updateProfile({ username: username.trim() });
+            toast.success("Profile updated!");
+            const newData = await fetchDashboardOverview();
+            if (newData) onUpdate(newData);
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : "Failed to update profile");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleChangePassword = async () => {
+        if (newPassword !== confirmPassword) {
+            toast.error("Passwords do not match");
+            return;
+        }
+        if (newPassword.length < 8) {
+            toast.error("Password must be at least 8 characters");
+            return;
+        }
+        setChangingPassword(true);
+        try {
+            await updatePassword(currentPassword, newPassword);
+            toast.success("Password changed!");
+            setCurrentPassword("");
+            setNewPassword("");
+            setConfirmPassword("");
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : "Failed to change password");
+        } finally {
+            setChangingPassword(false);
+        }
+    };
+
+    const handleDeleteAccount = async () => {
+        if (
+            !confirm(
+                "Are you sure you want to delete your account? This action cannot be undone."
+            )
+        )
+            return;
+        try {
+            await deleteAccount();
+            clearToken();
+            window.location.href = "/";
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : "Failed to delete account");
+        }
+    };
+
+    return (
+        <div className="max-w-2xl space-y-6">
+            <h1 className="text-2xl font-bold text-[var(--foreground)]">Settings</h1>
+
+            {/* Profile Section */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 space-y-5">
+                <h2 className="text-base font-semibold text-[var(--foreground)] flex items-center gap-2">
+                    <User className="h-4 w-4 text-[var(--primary)]" />
+                    Profile
+                </h2>
+
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-[var(--muted)] mb-1.5">
+                            Email
+                        </label>
+                        <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2.5">
+                            <Mail className="h-4 w-4 text-[var(--muted)]" />
+                            <span className="text-sm text-[var(--muted)]">{user.email}</span>
+                            <CheckCircle2 className="h-4 w-4 text-emerald-500 ml-auto" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-[var(--muted)] mb-1.5">
+                            Username
+                        </label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                placeholder="Enter username"
+                                className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                            />
+                            <button
+                                onClick={handleSaveProfile}
+                                disabled={saving || !username.trim()}
+                                className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                {saving ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Edit3 className="h-4 w-4" />
+                                )}
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Password Section */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 space-y-5">
+                <h2 className="text-base font-semibold text-[var(--foreground)] flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-[var(--primary)]" />
+                    Change Password
+                </h2>
+
+                <div className="space-y-3">
+                    <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Current password"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                    />
+                    <input
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="New password"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                    />
+                    <input
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Confirm new password"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                    />
+                    <button
+                        onClick={handleChangePassword}
+                        disabled={changingPassword || !currentPassword || !newPassword}
+                        className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        {changingPassword ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <Lock className="h-4 w-4" />
+                        )}
+                        Update Password
+                    </button>
+                </div>
+            </div>
+
+            {/* Danger Zone */}
+            <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-5 space-y-4">
+                <h2 className="text-base font-semibold text-red-400 flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    Danger Zone
+                </h2>
+                <p className="text-sm text-[var(--muted)]">
+                    Once you delete your account, there is no going back. All your diagrams
+                    and data will be permanently removed.
+                </p>
+                <button
+                    onClick={handleDeleteAccount}
+                    className="flex items-center gap-2 rounded-lg bg-red-500/20 px-4 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/30 transition-colors"
+                >
+                    <Trash2 className="h-4 w-4" />
+                    Delete Account
+                </button>
+            </div>
+        </div>
+    );
+}
+
+// --- Billing Tab ---
+function BillingTab({
+    user,
+    stats,
+    onUpdate,
+}: {
+    user: DashboardOverview["user"];
+    stats: DashboardOverview["stats"];
+    onUpdate?: (d: DashboardOverview) => void;
+}) {
+    const [upgradingPlan, setUpgradingPlan] = useState<string | null>(null);
+    const currentPlan = PLAN_INFO[user.plan] || PLAN_INFO.free;
+    const plans = Object.entries(PLAN_INFO);
+
+    const handleUpgrade = async (planKey: string) => {
+        if (planKey === "free") return;
+        // Redirect to pricing page for the full checkout experience
+        window.location.href = "/pricing";
+    };
+
+    return (
+        <div className="space-y-6">
+            <h1 className="text-2xl font-bold text-[var(--foreground)]">
+                Billing & Plans
+            </h1>
+
+            {/* Current Plan */}
+            <div className="rounded-xl border border-[var(--primary)]/30 bg-gradient-to-br from-[var(--primary)]/10 to-purple-500/10 p-5">
+                <div className="flex items-start justify-between">
+                    <div>
+                        <p className="text-sm text-[var(--primary)]">Current Plan</p>
+                        <h2 className="mt-1 text-xl font-bold text-[var(--foreground)] flex items-center gap-2">
+                            {currentPlan.name}
+                            {user.plan !== "free" && (
+                                <Crown className="h-5 w-5 text-amber-400" />
+                            )}
+                        </h2>
+                        <p className="mt-1 text-lg text-[var(--primary)]">
+                            {currentPlan.price}
+                        </p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-sm text-[var(--muted)]">Usage this month</p>
+                        <p className="mt-1 text-2xl font-bold text-[var(--foreground)]">
+                            {stats.diagrams_this_month}{" "}
+                            <span className="text-base text-[var(--muted)]">
+                                / {stats.plan_limit}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Plan Comparison */}
+            <div className="grid gap-4 lg:grid-cols-3">
+                {plans.map(([key, plan]) => (
+                    <div
+                        key={key}
+                        className={cn(
+                            "rounded-xl border p-5 transition-all",
+                            user.plan === key
+                                ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-2 ring-[var(--primary)]/30"
+                                : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted)]"
+                        )}
+                    >
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-base font-semibold text-[var(--foreground)]">
+                                {plan.name}
+                            </h3>
+                            {user.plan === key && (
+                                <span className="rounded-full bg-[var(--primary)]/20 px-2 py-0.5 text-xs font-medium text-[var(--primary)]">
+                                    Current
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-xl font-bold text-[var(--foreground)]">
+                            {plan.price}
+                        </p>
+                        <ul className="mt-4 space-y-2">
+                            {plan.features.map((feature, i) => (
+                                <li
+                                    key={i}
+                                    className="flex items-center gap-2 text-sm text-[var(--muted)]"
+                                >
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                                    {feature}
+                                </li>
+                            ))}
+                        </ul>
+                        {user.plan !== key && (
+                            <button
+                                type="button"
+                                onClick={() => handleUpgrade(key)}
+                                disabled={upgradingPlan !== null}
+                                className={cn(
+                                    "mt-5 w-full rounded-lg py-2.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2",
+                                    key === "pro" || key === "pro_annual"
+                                        ? "bg-[var(--primary)] text-white hover:opacity-90"
+                                        : key === "team"
+                                            ? "bg-violet-500 text-white hover:bg-violet-600"
+                                            : "bg-[var(--secondary)] text-[var(--muted)] hover:bg-[var(--accent)]"
+                                )}
+                            >
+                                {upgradingPlan === key ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Redirecting…
+                                    </>
+                                ) : key === "free" ? (
+                                    "Downgrade"
+                                ) : (
+                                    "Upgrade"
+                                )}
+                            </button>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            {/* Billing History */}
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                <h3 className="text-base font-semibold text-[var(--foreground)] mb-4">
+                    Billing History
+                </h3>
+                <div className="flex items-center justify-center py-6 text-[var(--muted)]">
+                    <p className="text-sm">No billing history yet</p>
+                </div>
+            </div>
+        </div>
+    );
+}

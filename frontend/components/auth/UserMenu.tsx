@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { User, LogOut, ChevronDown } from "lucide-react";
+import Link from "next/link";
+import { User, LogOut, ChevronDown, LayoutDashboard, Settings } from "lucide-react";
 import { fetchUser, clearToken, type User as AuthUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -108,14 +109,32 @@ export function UserMenu({
                 {user.diagrams_this_month} diagrams this month • {user.plan}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={handleLogout}
+            <Link
+              href="/dashboard"
+              onClick={() => setOpen(false)}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--secondary)]"
             >
-              <LogOut className="h-4 w-4" />
-              Log out
-            </button>
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </Link>
+            <Link
+              href="/dashboard?tab=settings"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--secondary)]"
+            >
+              <Settings className="h-4 w-4" />
+              Settings
+            </Link>
+            <div className="border-t border-[var(--border)] mt-1 pt-1">
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
+              >
+                <LogOut className="h-4 w-4" />
+                Log out
+              </button>
+            </div>
           </div>
         </>
       )}

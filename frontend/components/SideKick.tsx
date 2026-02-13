@@ -71,6 +71,8 @@ export interface SideKickProps {
   /* HLD drill-down to LLD */
   diagramPlan?: Record<string, unknown> | null;
   diagramType?: string;
+  /** When true, input placeholder suggests updating the diagram */
+  hasDiagram?: boolean;
 }
 
 type SideKickTab = "chat" | "github";
@@ -93,6 +95,7 @@ export function SideKick({
   newDiagramCount = 0,
   diagramPlan = null,
   diagramType = "architecture",
+  hasDiagram = false,
 }: SideKickProps) {
   const [input, setInput] = useState("");
   const [activeTab, setActiveTab] = useState<SideKickTab>("chat");
@@ -452,7 +455,7 @@ export function SideKick({
         </div>
 
         {/* ---- Input area (chat tab only) ---- */}
-        <div className={cn("shrink-0 border-t border-[var(--border)] bg-[var(--card)] p-3", activeTab !== "chat" && "hidden")}>
+        <div id="ai-input-area" className={cn("shrink-0 border-t border-[var(--border)] bg-[var(--card)] p-3", activeTab !== "chat" && "hidden")}>
           {/* Text input + actions */}
           <form onSubmit={handleSubmit} className="flex flex-col gap-2">
             <div className="relative">
@@ -464,7 +467,9 @@ export function SideKick({
                 placeholder={
                   editingMessageId
                     ? "Edit your message..."
-                    : "Describe your system..."
+                    : hasDiagram
+                      ? "Update diagram... (e.g. add a cache layer, remove X, change flow)"
+                      : "Describe your system..."
                 }
                 rows={3}
                 className="w-full resize-none rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 py-2.5 pr-20 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--primary)] transition"

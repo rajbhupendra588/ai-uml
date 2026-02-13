@@ -15,6 +15,7 @@ export interface User {
   username: string | null;
   plan: string;
   diagrams_this_month: number;
+  tokens_used_this_month: number;
 }
 
 export function getToken(): string | null {
@@ -30,6 +31,9 @@ export function setToken(token: string): void {
 export function clearToken(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);
+  // Clear chat messages and user ID when logging out
+  localStorage.removeItem("contextMessages");
+  localStorage.removeItem("lastUserId");
 }
 
 export function getAuthHeaders(): Record<string, string> {

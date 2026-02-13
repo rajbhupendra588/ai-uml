@@ -12,6 +12,10 @@ export function getGenerateUrl(): string {
   return `${getApiBaseUrl()}/api/v1/generate`;
 }
 
+export function getUpdateUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/update`;
+}
+
 export function getGenerateFromRepoUrl(): string {
   return `${getApiBaseUrl()}/api/v1/generate-from-repo`;
 }
@@ -64,6 +68,14 @@ export function getDiagramUrl(id: number): string {
   return `${getApiBaseUrl()}/api/v1/diagrams/${id}`;
 }
 
+export function getShareUrl(): string {
+  return `${getApiBaseUrl()}/api/v1/share`;
+}
+
+export function getShareDiagramUrl(shareId: string): string {
+  return `${getApiBaseUrl()}/api/v1/share/${shareId}`;
+}
+
 export function getGithubUserReposUrl(username: string): string {
   return `${getApiBaseUrl()}/api/v1/github/users/${encodeURIComponent(username)}/repos`;
 }
@@ -74,6 +86,9 @@ export interface GithubRepo {
   full_name: string;
   html_url: string;
   private: boolean;
+  description?: string | null;
+  stargazers_count?: number;
+  language?: string | null;
 }
 
 export interface ModelOption {

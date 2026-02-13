@@ -23,6 +23,7 @@ import HardwareNode from "./HardwareNode";
 import { GeneratingOverlay } from "./GeneratingOverlay";
 import { DiagramTypeSelector } from "./DiagramTypeSelector";
 import { DiagramDownloadMenu } from "./DiagramDownloadMenu";
+import { DiagramZoomControls } from "./DiagramZoomControls";
 import { EditNodePanel, type EditingNode } from "./EditNodePanel";
 import { DiagramControlsPanel } from "./DiagramControlsPanel";
 import { MermaidStyleEdge, MermaidBezierEdge } from "./MermaidStyleEdge";
@@ -40,6 +41,7 @@ import {
 } from "./uml";
 import {
   getGenerateUrl,
+  getUpdateUrl,
   getGenerateFromRepoUrl,
   getPlanUrl,
   getGenerateFromPlanUrl,
@@ -62,11 +64,12 @@ export interface DiagramVersion {
   direction: string;
   description: string;
 }
-import { Sparkles, FilePlus2, Save, FolderOpen, Pencil, Palette } from "lucide-react";
+import { Sparkles, FilePlus2, Save, FolderOpen, Pencil, Palette, Code2 } from "lucide-react";
 import { SaveDiagramModal } from "./SaveDiagramModal";
 import { DiagramsListPanel } from "./DiagramsListPanel";
 import { getAuthHeaders, getToken } from "@/lib/auth";
 import { SignupModal } from "@/components/auth/SignupModal";
+import { EntityEditPopup } from "./EntityEditPopup";
 
 const EMPTY_NODES: Node[] = [];
 const MAX_UNDO_HISTORY = 50;
@@ -207,7 +210,71 @@ function summarizePlan(plan: Record<string, unknown>, diagramType: DiagramType):
   return "Plan ready";
 }
 
+/** Build node ID -> full code map for per-node expand popover. */
+function buildNodeCodeMap(plan: Record<string, unknown> | null, diagramType: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!plan) return map;
 
+  const code = (obj: unknown): string | undefined =>
+    (obj && typeof obj === "object" && ("code" in obj || "snippet" in obj))
+      ? (String((obj as Record<string, unknown>).code || (obj as Record<string, unknown>).snippet || "").trim() || undefined)
+      : undefined;
+
+  if (diagramType === "architecture") {
+    const comps = plan.components as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(comps)) {
+      comps.forEach((c, i) => {
+        const cde = code(c);
+        if (cde) map[`n${i}`] = cde;
+      });
+    }
+  } else if (diagramType === "hld") {
+    const layers = plan.layers as Record<string, Array<Record<string, unknown>>> | undefined;
+    if (layers && typeof layers === "object") {
+      let idx = 0;
+      for (const items of Object.values(layers)) {
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            const cde = code(item);
+            if (cde) map[`n${idx}`] = cde;
+            idx++;
+          }
+        }
+      }
+    }
+  } else if (diagramType === "flowchart" || diagramType === "activity") {
+    const nodes = plan.nodes as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(nodes)) {
+      nodes.forEach((n) => {
+        const id = (n.id as string) || "";
+        const safe = id.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 25) || "n0";
+        const cde = code(n);
+        if (cde) map[safe] = cde;
+      });
+    }
+  } else if (diagramType === "state") {
+    const states = plan.states as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(states)) {
+      states.forEach((s) => {
+        const id = (s.id as string) || "";
+        const safe = id.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 30) || "s0";
+        const cde = code(s);
+        if (cde) map[safe] = cde;
+      });
+    }
+  } else if (diagramType === "component") {
+    const comps = plan.components as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(comps)) {
+      comps.forEach((c) => {
+        const id = (c.id as string) || (c.name as string) || "";
+        const safe = id.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 30) || "c0";
+        const cde = code(c);
+        if (cde) map[safe] = cde;
+      });
+    }
+  }
+  return map;
+}
 
 export interface CanvasProps {
   onEditCode?: (code: string) => void;
@@ -252,13 +319,28 @@ function CanvasInner({ onEditCode }: CanvasProps) {
   const [diagramFont, setDiagramFont] = useState<string>("Inter, sans-serif");
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [showCode, setShowCode] = useState(false);
+  const [codeDetailLevel, setCodeDetailLevel] = useState<"small" | "complete">("small");
   const [diagramControlsOpen, setDiagramControlsOpen] = useState(true);
+
+  // Entity editing state
+  const [editingEntity, setEditingEntity] = useState<{
+    id: string;
+    label: string;
+    position: { x: number; y: number };
+    styles?: {
+      fontFamily?: string;
+      fontSize?: string;
+      fill?: string;
+      stroke?: string;
+    };
+  } | null>(null);
 
   // Advanced Styling State
   const [edgeCurve, setEdgeCurve] = useState("monotoneX");
   const [spacing, setSpacing] = useState<"compact" | "normal" | "wide">("normal");
   const [backgroundPattern, setBackgroundPattern] = useState<"dots" | "lines" | "cross" | "none">("dots");
   const [layoutDirection, setLayoutDirection] = useState("TD");
+  const [canvasLayout, setCanvasLayout] = useState<"auto" | "adaptive" | "horizontal">("auto");
 
   const [customColors, setCustomColors] = useState<{
     nodeColor?: string;
@@ -306,25 +388,52 @@ function CanvasInner({ onEditCode }: CanvasProps) {
 
   // Restore persisted state from localStorage
   useLayoutEffect(() => {
-    try {
-      const sidebar = localStorage.getItem("showSideKick");
-      const raw = localStorage.getItem("contextMessages");
-      if (sidebar !== null) setShowSideKick(sidebar === "true");
-      if (raw) {
-        const parsed = JSON.parse(raw) as Array<{ id: string; role: string; content: string; timestamp: string; diagramType?: string }>;
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setContextMessages(
-            parsed.map((m) => ({
-              ...m,
-              role: m.role as "user" | "assistant",
-              timestamp: new Date(m.timestamp),
-            }))
-          );
+    const loadUserSpecificData = async () => {
+      try {
+        const sidebar = localStorage.getItem("showSideKick");
+        const codeLevel = localStorage.getItem("codeDetailLevel");
+        const lastUserId = localStorage.getItem("lastUserId");
+
+        if (sidebar !== null) setShowSideKick(sidebar === "true");
+        if (codeLevel === "complete" || codeLevel === "small") setCodeDetailLevel(codeLevel);
+
+        // Get current user to check if it's the same user
+        const { fetchUser } = await import("@/lib/auth");
+        const currentUser = await fetchUser();
+        const currentUserId = currentUser?.id?.toString() || null;
+
+        // If different user, clear messages
+        if (lastUserId && currentUserId && lastUserId !== currentUserId) {
+          localStorage.removeItem("contextMessages");
+          localStorage.setItem("lastUserId", currentUserId);
+          setContextMessages([]);
+          return;
         }
+
+        // If same user or first time, store user ID and load messages
+        if (currentUserId) {
+          localStorage.setItem("lastUserId", currentUserId);
+        }
+
+        const raw = localStorage.getItem("contextMessages");
+        if (raw) {
+          const parsed = JSON.parse(raw) as Array<{ id: string; role: string; content: string; timestamp: string; diagramType?: string }>;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setContextMessages(
+              parsed.map((m) => ({
+                ...m,
+                role: m.role as "user" | "assistant",
+                timestamp: new Date(m.timestamp),
+              }))
+            );
+          }
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
-    }
+    };
+
+    loadUserSpecificData();
   }, []);
 
   useEffect(() => {
@@ -332,6 +441,12 @@ function CanvasInner({ onEditCode }: CanvasProps) {
       localStorage.setItem("showSideKick", String(showSideKick));
     } catch { /* ignore */ }
   }, [showSideKick]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("codeDetailLevel", codeDetailLevel);
+    } catch { /* ignore */ }
+  }, [codeDetailLevel]);
 
   // Persist context messages (cap at 50)
   useEffect(() => {
@@ -543,6 +658,51 @@ function CanvasInner({ onEditCode }: CanvasProps) {
 
       const diagramTypeToSend = toValidDiagramType(diagramType);
 
+      // When diagram exists, use update endpoint to refine it
+      if (diagramCode && diagramCode.trim()) {
+        const response = await fetch(getUpdateUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({
+            prompt: trimmedPrompt,
+            current_mermaid: diagramCode,
+            model: selectedModel || null,
+            code_detail_level: codeDetailLevel,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          const message =
+            typeof data.detail === "string"
+              ? data.detail
+              : Array.isArray(data.detail) && data.detail[0]?.msg
+                ? `${data.detail[0].loc?.join(".") ?? "request"}: ${data.detail[0].msg}`
+                : "Diagram update failed. Please try again.";
+          toast.error(message, {
+            action: {
+              label: "Retry",
+              onClick: () => handlePrompt(lastPromptRef.current),
+            },
+          });
+          setLoading(false);
+          return;
+        }
+        // Apply update result (same shape as generate)
+        setDiagramCode(data.mermaid ?? diagramCode);
+        setDiagramVersions(data.versions ?? [{ code: data.mermaid ?? diagramCode, layout: "Default", direction: "TB", description: "Updated" }]);
+        setSelectedVersionIndex(0);
+        setExplanation(data.explanation ?? null);
+        setModelResponse(data.model_response ?? null);
+        setDiagramPlan(null);
+        setContextMessages((prev) => [
+          ...prev,
+          { id: `user-${Date.now()}`, role: "user", content: trimmedPrompt, timestamp: new Date() },
+        ]);
+        toast.success("Diagram updated");
+        setLoading(false);
+        return;
+      }
+
       if (planFirstMode) {
         const response = await fetch(getPlanUrl(), {
           method: "POST",
@@ -551,6 +711,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             prompt: trimmedPrompt,
             diagram_type: diagramTypeToSend,
             model: selectedModel || null,
+            code_detail_level: codeDetailLevel,
           }),
         });
         const data = await response.json();
@@ -592,6 +753,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
           prompt: trimmedPrompt,
           diagram_type: diagramTypeToSend,
           model: selectedModel || null,
+          code_detail_level: codeDetailLevel,
         }),
       });
 
@@ -671,7 +833,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     } finally {
       setLoading(false);
     }
-  }, [diagramType, selectedModel, planFirstMode, setNodes, setEdges]);
+  }, [diagramType, diagramCode, selectedModel, planFirstMode, codeDetailLevel, setNodes, setEdges]);
 
   const handleConfirmPlan = useCallback(async () => {
     if (!pendingPlan) return;
@@ -683,6 +845,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
         body: JSON.stringify({
           diagram_plan: pendingPlan.diagram_plan,
           diagram_type: toValidDiagramType(pendingPlan.diagram_type),
+          code_detail_level: codeDetailLevel,
         }),
       });
       const data = await response.json();
@@ -736,7 +899,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     } finally {
       setLoading(false);
     }
-  }, [pendingPlan, setNodes, setEdges]);
+  }, [pendingPlan, codeDetailLevel, setNodes, setEdges]);
 
   const handleCancelPlan = useCallback(() => {
     setPendingPlan(null);
@@ -764,6 +927,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             repo_url: (repoUrl || "").trim(),
             diagram_type: toValidDiagramType(diagramType),
             model: selectedModel || null,
+            code_detail_level: codeDetailLevel,
           }),
         });
 
@@ -901,33 +1065,93 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     setEditingNode(null);
   }, []);
 
+  /* Detect code-level intent from chat; returns adjusted prompt. If only code-level change, may trigger regenerate. */
+  const maybeAdjustCodeLevelFromPrompt = useCallback((prompt: string): { prompt: string; regenerateOnly?: boolean } => {
+    const lower = prompt.toLowerCase().trim();
+    if (/\b(show|display|use)\s+(full|complete|entire)\s+code\b/.test(lower) || /\bshow\s+complete\s+code\b/.test(lower)) {
+      setCodeDetailLevel("complete");
+      toast.success("Code level set to Complete");
+      const remainder = prompt.replace(/\b(show|display|use)\s+(full|complete|entire)\s+code\b/gi, "").replace(/\bshow\s+complete\s+code\b/gi, "").trim();
+      return { prompt: remainder || "Refresh diagram", regenerateOnly: !remainder };
+    }
+    if (/\b(show|display|use)\s+small\b/.test(lower) || /\bcollapse\s+code\b/.test(lower) || /\bshow\s+less\s+code\b/.test(lower)) {
+      setCodeDetailLevel("small");
+      toast.success("Code level set to Small");
+      const remainder = prompt.replace(/\b(show|display|use)\s+small\b/gi, "").replace(/\bcollapse\s+code\b/gi, "").replace(/\bshow\s+less\s+code\b/gi, "").trim();
+      return { prompt: remainder || "Refresh diagram", regenerateOnly: !remainder };
+    }
+    return { prompt };
+  }, []);
+
+  /* Regenerate diagram from plan with current code level (for "show full code" etc.) */
+  const handleRegenerateFromPlan = useCallback(async () => {
+    if (!diagramPlan || !diagramCode) return;
+    setLoading(true);
+    try {
+      const response = await fetch(getGenerateFromPlanUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          diagram_plan: diagramPlan,
+          diagram_type: toValidDiagramType(diagramType),
+          code_detail_level: codeDetailLevel,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(typeof data.detail === "string" ? data.detail : "Failed to refresh");
+        return;
+      }
+      if (data.mermaid) {
+        setDiagramCode(data.mermaid);
+        setDiagramVersions(data.versions ?? [{ code: data.mermaid, layout: "Default", direction: "TB", description: "Refreshed" }]);
+        setSelectedVersionIndex(0);
+        toast.success("Diagram refreshed");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }, [diagramPlan, diagramCode, diagramType, codeDetailLevel]);
+
   /* SideKick chat message handler - combines context + generates */
   const handleSideKickMessage = useCallback(
     (message: string) => {
+      const { prompt: adjustedPrompt, regenerateOnly } = maybeAdjustCodeLevelFromPrompt(message);
+      if (regenerateOnly && diagramPlan && diagramCode) {
+        handleRegenerateFromPlan();
+        return;
+      }
       const contextStr = contextMessages
         .slice(-4)
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n");
       const refinedPrompt = contextStr
-        ? `Previous context:\n${contextStr}\n\nUser's refinement: ${message}`
-        : message;
-      handlePrompt(refinedPrompt);
+        ? `Previous context:\n${contextStr}\n\nUser's refinement: ${adjustedPrompt}`
+        : adjustedPrompt;
+      if (refinedPrompt.trim()) handlePrompt(refinedPrompt);
     },
-    [contextMessages, handlePrompt]
+    [contextMessages, handlePrompt, maybeAdjustCodeLevelFromPrompt, handleRegenerateFromPlan, diagramPlan, diagramCode]
   );
 
   /* SideKick primary submit - direct prompt (no context prefix for first message) */
   const handleSideKickSubmit = useCallback(
     (prompt: string) => {
+      const { prompt: adjustedPrompt, regenerateOnly } = maybeAdjustCodeLevelFromPrompt(prompt);
+      if (regenerateOnly && diagramPlan && diagramCode) {
+        handleRegenerateFromPlan();
+        return;
+      }
       if (contextMessages.length === 0) {
-        // First message: send directly
-        handlePrompt(prompt);
+        if (adjustedPrompt.trim()) handlePrompt(adjustedPrompt);
       } else {
-        // Subsequent messages: include context
-        handleSideKickMessage(prompt);
+        const contextStr = contextMessages.slice(-4).map((m) => `${m.role}: ${m.content}`).join("\n");
+        const refinedPrompt = contextStr ? `Previous context:\n${contextStr}\n\nUser's refinement: ${adjustedPrompt}` : adjustedPrompt;
+        if (refinedPrompt.trim()) handlePrompt(refinedPrompt);
       }
     },
-    [contextMessages, handlePrompt, handleSideKickMessage]
+    [contextMessages, handlePrompt, maybeAdjustCodeLevelFromPrompt, handleRegenerateFromPlan, diagramPlan, diagramCode]
   );
 
   const handleEditMessage = useCallback(
@@ -966,6 +1190,93 @@ function CanvasInner({ onEditCode }: CanvasProps) {
       toast.success(`Switched to ${diagramVersions[index].layout} layout`);
     }
   }, [diagramVersions]);
+
+  /* Handler for clicking entity in Mermaid diagram */
+  const handleEntityClick = useCallback((nodeId: string, label?: string | undefined, event?: MouseEvent) => {
+    if (!event) return; // Guard clause for optional event
+
+    // Get position for popup
+    const position = { x: event.clientX, y: event.clientY };
+
+    setEditingEntity({
+      id: nodeId,
+      label: label || nodeId,
+      position,
+      styles: {
+        fontFamily: diagramFont,
+        fill: customColors.nodeColor,
+        stroke: customColors.edgeColor,
+      },
+    });
+  }, [diagramFont, customColors]);
+
+  /* Handler to save entity edits - update Mermaid code */
+  const handleEntitySave = useCallback((entityId: string, updates: {
+    label?: string;
+    fontFamily?: string;
+    fontSize?: string;
+    fill?: string;
+    stroke?: string;
+  }) => {
+    if (!diagramCode) return;
+
+    let updatedCode = diagramCode;
+
+    // Update label in code
+    if (updates.label) {
+      // Pattern: nodeId[oldLabel] or nodeId(oldLabel) or nodeId{oldLabel}, etc.
+      // Escape special regex characters in entityId to prevent regex injection
+      const escapedEntityId = entityId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const labelPattern = new RegExp(`(${escapedEntityId})([\\[({<])([^\\]\\)}>]+)([\\]\\)}>])`, 'g');
+      updatedCode = updatedCode.replace(labelPattern, `$1$2${updates.label}$4`);
+    }
+
+    // Add style directive for colors and fonts
+    // Mermaid supports class styles or inline styles
+    // We'll add a classDef and apply it to the node
+    const hasStyles = updates.fill || updates.stroke || updates.fontFamily;
+    if (hasStyles) {
+      const className = `style_${entityId}`;
+      let styleDef = `    classDef ${className}`;
+      const styleProps: string[] = [];
+
+      if (updates.fill) styleProps.push(`fill:${updates.fill}`);
+      if (updates.stroke) styleProps.push(`stroke:${updates.stroke}`);
+      if (updates.fontFamily) {
+        const fontName = updates.fontFamily.split(',')[0].trim();
+        styleProps.push(`font-family:${fontName}`);
+      }
+      if (updates.fontSize) styleProps.push(`font-size:${updates.fontSize}`);
+
+      if (styleProps.length > 0) {
+        styleDef += ` ${styleProps.join(',')};`;
+
+        // Check if classDef already exists for this entity
+        const classDefPattern = new RegExp(`classDef ${className}[^\n]*`, 'g');
+        if (classDefPattern.test(updatedCode)) {
+          // Replace existing
+          updatedCode = updatedCode.replace(classDefPattern, styleDef);
+        } else {
+          // Add at the end
+          updatedCode += `\n${styleDef}`;
+        }
+
+        // Apply class to node
+        const classApplyPattern = new RegExp(`class ${entityId} ${className}[^\n]*`, 'g');
+        if (!classApplyPattern.test(updatedCode)) {
+          updatedCode += `\n    class ${entityId} ${className}`;
+        }
+      }
+    }
+
+    setDiagramCode(updatedCode);
+    setEditingEntity(null);
+    toast.success("Entity updated");
+  }, [diagramCode]);
+
+  const handleEntityCancel = useCallback(() => {
+    setEditingEntity(null);
+  }, []);
 
   return (
     <div className="relative flex h-full w-full flex-row overflow-hidden">
@@ -1008,7 +1319,37 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             <span>Plan first</span>
           </label>
 
-
+          {/* Code detail toggle */}
+          <div className="hidden lg:flex items-center gap-1 shrink-0">
+            <Code2 className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden />
+            <span className="text-xs font-medium text-muted">Code:</span>
+            <div className="flex rounded-md border border-[var(--border)] bg-[var(--card)] p-0.5">
+              <button
+                type="button"
+                onClick={() => setCodeDetailLevel("small")}
+                className={cn(
+                  "px-2 py-0.5 text-xs font-medium rounded transition",
+                  codeDetailLevel === "small"
+                    ? "bg-[var(--primary)] text-white"
+                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Small
+              </button>
+              <button
+                type="button"
+                onClick={() => setCodeDetailLevel("complete")}
+                className={cn(
+                  "px-2 py-0.5 text-xs font-medium rounded transition",
+                  codeDetailLevel === "complete"
+                    ? "bg-[var(--primary)] text-white"
+                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Complete
+              </button>
+            </div>
+          </div>
 
           {/* Spacer */}
           <div className="flex-1 min-w-2" />
@@ -1093,6 +1434,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
 
         {/* ---- Canvas / Diagram area ---- */}
         <div
+          id="canvas-area"
           ref={flowContainerRef}
           role="main"
           aria-label={diagramCode ? "Rendered diagram" : "Diagram canvas"}
@@ -1125,7 +1467,12 @@ function CanvasInner({ onEditCode }: CanvasProps) {
               /* Show rendered diagram */
               <MermaidDiagram
                 code={diagramCode}
-                className={cn("h-full w-full transition-all duration-300", diagramControlsOpen && "pl-64")}
+                className={cn(
+                  "h-full w-full transition-all duration-300",
+                  diagramControlsOpen && "pl-64",
+                  canvasLayout === "adaptive" && "flex items-center justify-center",
+                  canvasLayout === "horizontal" && "min-w-full"
+                )}
                 is3D={is3D}
                 look={look}
                 diagramTheme={diagramTheme}
@@ -1135,6 +1482,8 @@ function CanvasInner({ onEditCode }: CanvasProps) {
                 nodeSpacing={nodeSpacing}
                 rankSpacing={rankSpacing}
                 backgroundPattern={backgroundPattern}
+                nodeCodeMap={buildNodeCodeMap(diagramPlan, diagramType)}
+                onNodeClick={handleEntityClick}
               />
             )
           ) : showWelcome ? (
@@ -1252,58 +1601,16 @@ function CanvasInner({ onEditCode }: CanvasProps) {
                 setSpacing={setSpacing}
                 layoutDirection={layoutDirection}
                 setLayoutDirection={handleLayoutDirectionChange}
+                canvasLayout={canvasLayout}
+                setCanvasLayout={setCanvasLayout}
                 diagramType={diagramType}
                 onEditCode={onEditCode ? () => onEditCode(diagramCode!) : undefined}
+                codeDetailLevel={codeDetailLevel}
+                setCodeDetailLevel={setCodeDetailLevel}
+                diagramPlan={diagramPlan}
               />
 
-              {/* Zoom controls for Mermaid diagrams */}
-              <div data-diagram-download-hide className="absolute bottom-4 right-4 z-20 flex flex-col gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-lg">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const svg = flowContainerRef.current?.querySelector("svg");
-                    if (!svg) return;
-                    const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
-                    const next = Math.min(cur + 0.15, 3);
-                    svg.style.transform = `scale(${next})`;
-                    svg.style.transformOrigin = "center center";
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
-                  title="Zoom in"
-                  aria-label="Zoom in"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const svg = flowContainerRef.current?.querySelector("svg");
-                    if (!svg) return;
-                    const cur = parseFloat(svg.style.transform?.match(/scale\(([^)]+)\)/)?.[1] || "1");
-                    const next = Math.max(cur - 0.15, 0.3);
-                    svg.style.transform = `scale(${next})`;
-                    svg.style.transformOrigin = "center center";
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
-                  title="Zoom out"
-                  aria-label="Zoom out"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" /></svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const svg = flowContainerRef.current?.querySelector("svg");
-                    if (!svg) return;
-                    svg.style.transform = "scale(1)";
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-bold text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition"
-                  title="Reset zoom"
-                  aria-label="Reset zoom"
-                >
-                  1:1
-                </button>
-              </div>
+              <DiagramZoomControls containerRef={flowContainerRef} visible={!!diagramCode && !showCode} />
             </>
           )}
 
@@ -1351,6 +1658,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
         newDiagramCount={newDiagramCount}
         diagramPlan={diagramPlan}
         diagramType={diagramType}
+        hasDiagram={!!diagramCode}
       />
 
       <KeyboardShortcutsHelp isOpen={showHelp} onClose={() => setShowHelp(false)} />
@@ -1376,6 +1684,18 @@ function CanvasInner({ onEditCode }: CanvasProps) {
         onClose={() => setDiagramsPanelOpen(false)}
         onLoad={handleLoadDiagram}
       />
+
+      {/* Entity edit popup for Mermaid diagram entities */}
+      {editingEntity && (
+        <EntityEditPopup
+          position={editingEntity.position}
+          entityId={editingEntity.id}
+          label={editingEntity.label}
+          styles={editingEntity.styles}
+          onSave={handleEntitySave}
+          onCancel={handleEntityCancel}
+        />
+      )}
 
       {/* Sign up modal for guest limit */}
       <SignupModal

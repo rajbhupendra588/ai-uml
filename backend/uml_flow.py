@@ -11,18 +11,42 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger("architectai.uml")
 
+
+def _format_code_for_mermaid(code: str | None, level: str = "small") -> str:
+    """Format code for Mermaid node labels. NO HTML entities - they show as literal in SVG."""
+    if not code or not isinstance(code, str):
+        return ""
+    text = code.strip()
+    if not text:
+        return ""
+    if level == "small":
+        lines = text.split("\n")[:3]
+        text = "\n".join(lines)
+        if len(text) > 150:
+            text = text[:147] + "..."
+    else:
+        lines = text.split("\n")[:15]
+        text = "\n".join(lines)
+        if len(text) > 500:
+            text = text[:497] + "..."
+    text = text.replace("&", " and ").replace('"', "'")
+    text = text.replace("[", "(").replace("]", ")")
+    text = text.replace("\n", "<br/>")
+    return text
+
 # --- Class diagram ---
 CLASS_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a CLASS DIAGRAM.
 Return ONLY valid JSON with this exact structure:
 {
   "classes": [
-    { "name": "ClassName", "attributes": ["attr: Type"], "methods": ["method(args): ReturnType"] }
+    { "name": "ClassName", "attributes": ["attr: Type"], "methods": ["method(args): ReturnType"], "code": "optional 2-10 line snippet if user asks for code" }
   ],
   "relationships": [
     { "from": "ClassNameA", "to": "ClassNameB", "type": "extends" | "implements" | "associates" | "uses", "label": "optional short label" }
   ]
 }
-Rules: Keep 3-8 classes. "from" and "to" MUST be exact class names from the classes list. Keep names and labels SHORT. Use standard UML relationship types only."""
+Rules: Keep 3-8 classes. "from" and "to" MUST be exact class names from the classes list. Keep names and labels SHORT. Use standard UML relationship types only.
+Optional: Add "code" to a class when the user asks for implementation or code snippets."""
 
 # --- Sequence diagram ---
 SEQUENCE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a SEQUENCE DIAGRAM (time-ordered interactions).
@@ -73,18 +97,19 @@ ACTIVITY_SYSTEM_PROMPT = """You are a software architect. From the user's descri
 Return ONLY valid JSON with this exact structure:
 {
   "nodes": [
-    { "id": "n1", "type": "start" | "activity" | "decision" | "end", "label": "Short label" }
+    { "id": "n1", "type": "start" | "activity" | "decision" | "end", "label": "Short label", "code": "optional 2-10 line snippet if user asks for code" }
   ],
   "edges": [ { "from": "n1", "to": "n2", "label": "short", "order": 1 } ]
 }
-Rules: Exactly one start and one end. "from" and "to" MUST be node ids. Edges MUST have "order": 1, 2, 3... in flow order. Keep all labels SHORT (2-5 words). Use 4-12 nodes."""
+Rules: Exactly one start and one end. "from" and "to" MUST be node ids. Edges MUST have "order": 1, 2, 3... in flow order. Keep all labels SHORT (2-5 words). Use 4-12 nodes.
+Optional: Add "code" to a node when the user asks for code or implementation details."""
 
 # --- Flowchart diagram ---
 FLOWCHART_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a FLOWCHART.
 Return ONLY valid JSON with this exact structure:
 {
   "nodes": [
-    { "id": "n1", "type": "start" | "process" | "decision" | "end", "label": "Short label" }
+    { "id": "n1", "type": "start" | "process" | "decision" | "end", "label": "Short label", "code": "optional 2-10 line snippet if user asks for code" }
   ],
   "edges": [ { "from": "n1", "to": "n2", "label": "yes/no/ok", "order": 1 } ]
 }
@@ -92,25 +117,27 @@ Rules:
 - "type": "start" (rounded), "process" (box), "decision" (diamond), "end" (rounded).
 - "from" and "to" MUST be node ids.
 - Edges MUST have "order": 1, 2, 3... in flow order.
-- Keep labels SHORT."""
+- Keep labels SHORT. Optional: Add "code" to a node when the user asks for code snippets."""
 
 # --- State diagram ---
 STATE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a STATE DIAGRAM.
 Return ONLY valid JSON with this exact structure:
 {
-  "states": [ { "id": "s1", "name": "State Name", "isInitial": false, "isFinal": false } ],
+  "states": [ { "id": "s1", "name": "State Name", "isInitial": false, "isFinal": false, "code": "optional 2-10 line snippet if user asks for code" } ],
   "transitions": [ { "from": "s1", "to": "s2", "label": "event / action", "order": 1 } ]
 }
-Rules: Exactly one state with isInitial: true. Optionally one isFinal: true. "from" and "to" MUST be state ids. Transitions MUST have "order": 1, 2, 3... for display. Keep labels SHORT."""
+Rules: Exactly one state with isInitial: true. Optionally one isFinal: true. "from" and "to" MUST be state ids. Transitions MUST have "order": 1, 2, 3... for display. Keep labels SHORT.
+Optional: Add "code" to a state when the user asks for code or implementation details."""
 
 # --- Component diagram ---
 COMPONENT_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a COMPONENT DIAGRAM.
 Return ONLY valid JSON with this exact structure:
 {
-  "components": [ { "id": "c1", "name": "Component Name" } ],
+  "components": [ { "id": "c1", "name": "Component Name", "code": "optional 2-10 line snippet if user asks for code" } ],
   "dependencies": [ { "from": "c1", "to": "c2", "label": "optional short label", "order": 1 } ]
 }
-Rules: 3-8 components. "from" and "to" MUST be component ids. Add "order": 1, 2, 3... to dependencies for display. Keep names and labels SHORT."""
+Rules: 3-8 components. "from" and "to" MUST be component ids. Add "order": 1, 2, 3... to dependencies for display. Keep names and labels SHORT.
+Optional: Add "code" to a component when the user asks for code or implementation details."""
 
 # --- Deployment diagram ---
 DEPLOYMENT_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a SIMPLE deployment diagram that is easy to understand.
@@ -406,7 +433,7 @@ def generate_uml(diagram_type: str, plan: dict) -> dict:
     return fn(plan)
 
 
-def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
+def plan_to_mermaid(diagram_type: str, plan: dict, code_detail_level: str = "small") -> str | None:
     """
     Produce Mermaid diagram code from the same plan used for nodes/edges.
     Returns None for types we don't map to Mermaid. Keeps rendering abstract (caller chooses flow vs mermaid).
@@ -444,6 +471,11 @@ def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
         for n in uml_nodes:
             nid = id_map.get(n.get("id", ""), "n0")
             label = (n.get("label") or nid).replace("]", " ").replace("[", " ").replace("(", " ").replace(")", " ").replace('"', "'")[:40]
+            code_block = n.get("code") or n.get("snippet")
+            if code_block:
+                code_fmt = _format_code_for_mermaid(code_block, code_detail_level)
+                if code_fmt:
+                    label = f"{label}<br/>{code_fmt}"
             t = (n.get("type") or "process").lower()
             if t == "start":
                 lines.append(f'    {nid}(["{label}"])')
@@ -479,6 +511,11 @@ def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
         for n in uml_nodes:
             nid = id_map.get(n.get("id", ""), "n0")
             label = (n.get("label") or nid).replace("]", " ").replace("[", " ").replace("(", " ").replace(")", " ").replace('"', "'")[:40]
+            code_block = n.get("code") or n.get("snippet")
+            if code_block:
+                code_fmt = _format_code_for_mermaid(code_block, code_detail_level)
+                if code_fmt:
+                    label = f"{label}<br/>{code_fmt}"
             t = (n.get("type") or "activity").lower()
             if t == "start":
                 lines.append(f'    {nid}(["{label}"])')
@@ -509,6 +546,7 @@ def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
             for method in (c.get("methods") or [])[:5]:
                 m = str(method).replace('"', "'").replace("{", " ").replace("}", " ")[:50]
                 lines.append(f"        +{m}")
+            # Class diagram notes not supported in Mermaid; code available in plan for React Flow / popover
             lines.append("    }")
         name_to_id = {c.get("name", ""): (c.get("name") or "").replace(" ", "_") for c in classes}
         for rel in relationships:
@@ -531,6 +569,11 @@ def plan_to_mermaid(diagram_type: str, plan: dict) -> str | None:
         lines = ["stateDiagram-v2"]
         for s in states:
             name = (s.get("name") or s.get("id") or "?").replace('"', "'").replace(":", " ")[:40]
+            code_block = s.get("code") or s.get("snippet")
+            if code_block:
+                code_fmt = _format_code_for_mermaid(code_block, code_detail_level)
+                if code_fmt:
+                    name = f"{name}<br/>{code_fmt}"
             sid = (s.get("id") or "s").replace("-", "_")[:30]
             if s.get("isInitial"):
                 lines.append(f"    [*] --> {sid}")

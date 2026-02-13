@@ -108,6 +108,7 @@ class AgentState(TypedDict):
     model: str
     diagram_plan: dict
     json_output: dict
+    code_detail_level: str  # "small" | "complete"
 
 # --- LLM Setup ---
 # --- LLM Setup ---
@@ -288,6 +289,7 @@ Required structure:
     }}
     
     Include relevant components based on the system requirements. Be specific with technology choices.
+    Optional: Add "code" or "snippet" (string, 2-10 lines) to any component when the user asks for code or implementation details.
     """
     
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
@@ -415,6 +417,8 @@ BEST PRACTICES / CONTEXT:
 Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
 Required structure: a single key "components" with an array of objects. Each object must have "name" (string) and "type" (string).
 Allowed types: server, database, auth, balancer, client, function, queue, gateway, cdn, cache, search, storage, external, monitoring.
+
+Optional: Add "code" or "snippet" (string) to a component when the user asks for code or implementation (e.g. "show the login function", "architecture with API code", "include code snippets"). Keep snippets short (2-10 lines).
 
 Example: {{"components": [{{"name": "Auth Service", "type": "auth"}}, {{"name": "PostgreSQL", "type": "database"}}, {{"name": "API Gateway", "type": "gateway"}}]}}
 Use 3-12 components. Be specific with names and types."""
@@ -601,7 +605,7 @@ def _tier_index(comp_type: str) -> int:
 # LAYOUT ALGORITHMS
 # =============================================================================
 
-def _architecture_to_mermaid_tb(components: list[dict], layout_name: str = "Hierarchical") -> dict:
+def _architecture_to_mermaid_tb(components: list[dict], layout_name: str = "Hierarchical", code_detail_level: str = "small") -> dict:
     """
     Generate Mermaid flowchart code for architecture diagrams - Top-to-Bottom layout.
     Returns dict with mermaid code and layout metadata.
@@ -630,8 +634,10 @@ def _architecture_to_mermaid_tb(components: list[dict], layout_name: str = "Hier
             name = _sanitize_mermaid_label(comp.get("name", "Service")[:40])
             icon = comp.get("icon", "📦")
             comp_type = comp.get("type", "server")
-            label = f"{icon} {name}"
-            
+            code_block = comp.get("code") or comp.get("snippet")
+            code_fmt = _format_code_for_mermaid(code_block, code_detail_level) if code_block else ""
+            label = f"{icon} {name}" + (f"<br/>{code_fmt}" if code_fmt else "")
+
             # Use safe shapes based on component type
             if comp_type == "database":
                 lines.append(f'    {node_id}[("{label}")]')
@@ -687,7 +693,7 @@ def _architecture_to_mermaid_tb(components: list[dict], layout_name: str = "Hier
     }
 
 
-def _architecture_to_mermaid_lr(components: list[dict], layout_name: str = "Horizontal") -> dict:
+def _architecture_to_mermaid_lr(components: list[dict], layout_name: str = "Horizontal", code_detail_level: str = "small") -> dict:
     """
     Generate Mermaid flowchart code - Left-to-Right layout.
     Better for showing data flow pipelines.
@@ -725,8 +731,10 @@ def _architecture_to_mermaid_lr(components: list[dict], layout_name: str = "Hori
             name = _sanitize_mermaid_label(comp.get("name", "Service")[:35])
             icon = comp.get("icon", "📦")
             comp_type = comp.get("type", "server")
-            label = f"{icon} {name}"
-            
+            code_block = comp.get("code") or comp.get("snippet")
+            code_fmt = _format_code_for_mermaid(code_block, code_detail_level) if code_block else ""
+            label = f"{icon} {name}" + (f"<br/>{code_fmt}" if code_fmt else "")
+
             if comp_type == "database":
                 lines.append(f'        {node_id}[("{label}")]')
             elif comp_type in ("queue", "cache"):
@@ -769,7 +777,7 @@ def _architecture_to_mermaid_lr(components: list[dict], layout_name: str = "Hori
     }
 
 
-def _architecture_to_mermaid_grouped(components: list[dict], layout_name: str = "Grouped") -> dict:
+def _architecture_to_mermaid_grouped(components: list[dict], layout_name: str = "Grouped", code_detail_level: str = "small") -> dict:
     """
     Generate Mermaid flowchart code - Grouped by category with subgraphs.
     Best for showing logical groupings.
@@ -828,8 +836,10 @@ def _architecture_to_mermaid_grouped(components: list[dict], layout_name: str = 
             name = _sanitize_mermaid_label(comp.get("name", "Service")[:35])
             icon = comp.get("icon", "📦")
             comp_type = comp.get("type", "server")
-            label = f"{icon} {name}"
-            
+            code_block = comp.get("code") or comp.get("snippet")
+            code_fmt = _format_code_for_mermaid(code_block, code_detail_level) if code_block else ""
+            label = f"{icon} {name}" + (f"<br/>{code_fmt}" if code_fmt else "")
+
             if comp_type == "database":
                 lines.append(f'        {node_id}[("{label}")]')
             elif comp_type in ("queue", "cache"):
@@ -983,17 +993,44 @@ def _architecture_to_mermaid(components: list[dict]) -> str:
 
 
 def _sanitize_mermaid_label(text: str) -> str:
-    """Sanitize text for use in Mermaid labels."""
-    # Remove or replace problematic characters
+    """Sanitize text for use in Mermaid labels. Plain replacements only, no HTML entities."""
+    text = text.replace("&", " and ")
     text = text.replace('"', "'")
-    text = text.replace('[', '(')
-    text = text.replace(']', ')')
-    text = text.replace('{', '(')
-    text = text.replace('}', ')')
-    text = text.replace('<', '')
-    text = text.replace('>', '')
-    text = text.replace('\\n', ' - ')
-    text = text.replace('\n', ' ')
+    text = text.replace("[", "(").replace("]", ")")
+    text = text.replace("{", "(").replace("}", ")")
+    text = text.replace("<", "").replace(">", "")
+    text = text.replace("\\n", " - ").replace("\n", " ")
+    return text
+
+
+def _format_code_for_mermaid(code: str | None, level: str = "small") -> str:
+    """
+    Format code for Mermaid node labels.
+    - small: 2-3 lines or ~150 chars
+    - complete: up to ~500 chars
+    NO HTML entities - they show as literal text in Mermaid SVG. Use plain replacements.
+    """
+    if not code or not isinstance(code, str):
+        return ""
+    text = code.strip()
+    if not text:
+        return ""
+    # Truncate by level
+    if level == "small":
+        lines = text.split("\n")[:3]
+        text = "\n".join(lines)
+        if len(text) > 150:
+            text = text[:147] + "..."
+    else:
+        lines = text.split("\n")[:15]
+        text = "\n".join(lines)
+        if len(text) > 500:
+            text = text[:497] + "..."
+    # Plain replacements only - no HTML entities (&#34;, &#40;, &amp; etc show as literal)
+    text = text.replace("&", " and ")
+    text = text.replace('"', "'")
+    text = text.replace("[", "(").replace("]", ")")  # Avoid Mermaid bracket conflicts
+    text = text.replace("\n", "<br/>")
     return text
 
 
@@ -1072,7 +1109,7 @@ def _mindtree_to_mermaid_tidy(plan: dict) -> str:
     return body
 
 
-def _hld_to_mermaid(plan: dict) -> str:
+def _hld_to_mermaid(plan: dict, code_detail_level: str = "small") -> str:
     """
     Generate a comprehensive Mermaid flowchart for High-Level Design (HLD).
     Uses subgraphs for each layer with detailed component information.
@@ -1147,7 +1184,12 @@ def _hld_to_mermaid(plan: dict) -> str:
                 label = f"{icon} {name} - {tech}"
             else:
                 label = f"{icon} {name}"
-            
+            code_block = comp.get("code") or comp.get("snippet")
+            if code_block:
+                code_fmt = _format_code_for_mermaid(code_block, code_detail_level)
+                if code_fmt:
+                    label = f"{label}<br/>{code_fmt}"
+
             # Use safe shapes based on component type (avoiding problematic syntax)
             if comp_type == "database":
                 lines.append(f'        {node_id}[("{label}")]')
@@ -1562,6 +1604,65 @@ Rules:
         return "graph TD\n    Error[Generation Failed]\n    Details[Check Logs]"
 
 
+def update_diagram(current_mermaid: str, prompt: str, model: str | None = None) -> dict:
+    """
+    Update an existing diagram based on user refinement prompt.
+    Takes current Mermaid code and user's update request, returns updated diagram.
+    """
+    llm_to_use = _get_llm_for_request(model) if model else _get_llm_for_request(None)
+    if not llm_to_use:
+        return {
+            "mermaid": current_mermaid,
+            "nodes": [],
+            "edges": [],
+            "versions": [{"code": current_mermaid, "layout": "Default", "direction": "TB", "description": "No LLM configured"}],
+            "selectedVersion": 0,
+        }
+
+    system_prompt = """You are a Mermaid.js expert. The user has an existing diagram and wants to update it.
+Rules:
+1. Return ONLY the updated Mermaid code. No markdown fences (```mermaid), no explanations.
+2. Keep the same diagram type (flowchart, sequenceDiagram, classDiagram, etc.) unless the user explicitly asks to change it.
+3. Apply the user's requested changes to the existing diagram. Add, remove, or modify elements as requested.
+4. Preserve structure and styling that the user did not ask to change.
+5. Ensure syntax is valid and up-to-date."""
+    user_prompt = f"""Current diagram:
+```mermaid
+{current_mermaid}
+```
+
+User's update request: {prompt}
+
+Return the updated Mermaid diagram code only:"""
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+    try:
+        response = llm_to_use.invoke(messages)
+        content = response.content.strip()
+        if content.startswith("```mermaid"):
+            content = content[10:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        updated_code = content.strip()
+        return {
+            "mermaid": updated_code,
+            "nodes": [],
+            "edges": [],
+            "versions": [{"code": updated_code, "layout": "Default", "direction": "TB", "description": "Updated from chat"}],
+            "selectedVersion": 0,
+        }
+    except Exception as e:
+        logger.exception("Diagram update error: %s", e)
+        return {
+            "mermaid": current_mermaid,
+            "nodes": [],
+            "edges": [],
+            "versions": [{"code": current_mermaid, "layout": "Default", "direction": "TB", "description": "Update failed, kept original"}],
+            "selectedVersion": 0,
+        }
+
+
 def generator_node(state: AgentState):
     """
     Generates Mermaid diagram code from the plan.
@@ -1596,7 +1697,10 @@ def generator_node(state: AgentState):
     
     # HLD diagram - generate multiple versions
     if diagram_type == "hld":
-        versions = _generate_hld_versions(plan)
+        code_level = (state.get("code_detail_level") or "small").lower()
+        if code_level not in ("small", "complete"):
+            code_level = "small"
+        versions = _generate_hld_versions(plan, code_level)
         return {"json_output": {
             "mermaid": versions[0]["code"] if versions else "",
             "nodes": [],
@@ -1637,12 +1741,16 @@ def generator_node(state: AgentState):
         components = plan.get("components", [])
         if not components:
             return {"json_output": {"mermaid": "", "nodes": [], "edges": [], "versions": []}}
-        
+
+        code_level = (state.get("code_detail_level") or "small").lower()
+        if code_level not in ("small", "complete"):
+            code_level = "small"
+
         # Generate 3 layout versions
         versions = [
-            _architecture_to_mermaid_tb(components, "Hierarchical"),
-            _architecture_to_mermaid_lr(components, "Horizontal Flow"),
-            _architecture_to_mermaid_grouped(components, "Grouped"),
+            _architecture_to_mermaid_tb(components, "Hierarchical", code_level),
+            _architecture_to_mermaid_lr(components, "Horizontal Flow", code_level),
+            _architecture_to_mermaid_grouped(components, "Grouped", code_level),
         ]
         
         return {"json_output": {
@@ -1655,7 +1763,10 @@ def generator_node(state: AgentState):
 
     # UML diagrams - generate Mermaid code
     from uml_flow import plan_to_mermaid
-    mermaid_code = plan_to_mermaid(diagram_type, plan)
+    code_level = (state.get("code_detail_level") or "small").lower()
+    if code_level not in ("small", "complete"):
+        code_level = "small"
+    mermaid_code = plan_to_mermaid(diagram_type, plan, code_level)
     
     # Get explanation if available (deployment diagrams)
     if diagram_type == "deployment" and isinstance(plan.get("explanation"), str):
@@ -1679,7 +1790,7 @@ def generator_node(state: AgentState):
     return {"json_output": result}
 
 
-def _generate_hld_versions(plan: dict) -> list[dict]:
+def _generate_hld_versions(plan: dict, code_detail_level: str = "small") -> list[dict]:
     """Generate multiple HLD layout versions."""
     layers = plan.get("layers", {})
     flows = plan.get("flows", [])
@@ -1688,7 +1799,7 @@ def _generate_hld_versions(plan: dict) -> list[dict]:
     
     # Version 1: Standard TB layout
     versions.append({
-        "code": _hld_to_mermaid(plan),
+        "code": _hld_to_mermaid(plan, code_detail_level),
         "layout": "Layered",
         "direction": "TB",
         "description": "Standard layered architecture view",
@@ -1851,8 +1962,11 @@ workflow.add_edge("generator", END)
 
 app = workflow.compile()
 
-def run_agent(prompt: str, diagram_type: str = "architecture", model: str | None = None):
-    inputs = {"prompt": prompt, "messages": [], "diagram_type": diagram_type, "model": model or ""}
+def run_agent(prompt: str, diagram_type: str = "architecture", model: str | None = None, code_detail_level: str | None = None):
+    level = (code_detail_level or "small").lower()
+    if level not in ("small", "complete"):
+        level = "small"
+    inputs = {"prompt": prompt, "messages": [], "diagram_type": diagram_type, "model": model or "", "code_detail_level": level}
     result = app.invoke(inputs)
     output = result["json_output"]
     if result.get("diagram_plan"):
@@ -1996,14 +2110,18 @@ def run_plan_only(prompt: str, diagram_type: str = "architecture", model: str | 
     return out["diagram_plan"]
 
 
-def run_generator_from_plan(diagram_plan: dict, diagram_type: str) -> dict:
+def run_generator_from_plan(diagram_plan: dict, diagram_type: str, code_detail_level: str = "small") -> dict:
     """Generate diagram output from an existing plan (e.g. after user confirmation). No LLM call."""
+    level = (code_detail_level or "small").lower()
+    if level not in ("small", "complete"):
+        level = "small"
     state = {
         "diagram_plan": diagram_plan,
         "diagram_type": diagram_type,
         "messages": [],
         "prompt": "",
         "model": "",
+        "code_detail_level": level,
     }
     out = generator_node(state)
     result = out["json_output"]

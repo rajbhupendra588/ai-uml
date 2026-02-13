@@ -80,6 +80,7 @@ async def read_users_me(current_user: User = Depends(get_current_user_required))
         "username": current_user.username,
         "plan": current_user.plan,
         "diagrams_this_month": current_user.diagrams_this_month,
+        "tokens_used_this_month": current_user.tokens_used_this_month,
     }
 
 

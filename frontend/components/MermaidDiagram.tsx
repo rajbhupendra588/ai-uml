@@ -4,6 +4,22 @@ import React, { useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { useTheme } from "./ThemeProvider";
 
+/**
+ * Decode HTML entities in Mermaid code before render. Entities show as literal text
+ * in SVG output. Replace with actual chars so diagram displays correctly.
+ */
+function decodeEntitiesInMermaid(code: string): string {
+  return code
+    .replace(/&#34;/g, "'")
+    .replace(/&quot;/g, "'")
+    .replace(/&#40;/g, "(")
+    .replace(/&#41;/g, ")")
+    .replace(/&#91;/g, "[")
+    .replace(/&#93;/g, "]")
+    .replace(/&#35;/g, "#")
+    .replace(/&amp;/g, "&");
+}
+
 const darkThemeConfig = {
   theme: "dark" as const,
   themeVariables: {
@@ -212,6 +228,15 @@ export const DIAGRAM_THEMES = {
 
 export type DiagramTheme = keyof typeof DIAGRAM_THEMES;
 
+/** Extract Mermaid node ID from SVG element id (e.g. "flowchart-A-0" -> "A") */
+function extractNodeIdFromSvgId(svgId: string): string | null {
+  if (!svgId) return null;
+  const parts = svgId.split("-");
+  if (parts.length >= 3) return parts.slice(1, -1).join("-");
+  if (parts.length >= 2) return parts.slice(1).join("-");
+  return svgId;
+}
+
 export interface MermaidDiagramProps {
   code: string;
   className?: string;
@@ -229,6 +254,12 @@ export interface MermaidDiagramProps {
     bgColor?: string;
   };
   backgroundPattern?: "dots" | "lines" | "cross" | "none";
+  /** Map Mermaid node IDs to full code for per-node expand popover */
+  nodeCodeMap?: Record<string, string>;
+  /** Called when user clicks a node. Pass nodeId, optional label, and event (for ctrlKey). */
+  onNodeClick?: (nodeId: string, label?: string, event?: MouseEvent) => void;
+  /** Node IDs to highlight as selected (for update flow) */
+  selectedNodeIds?: string[];
 }
 
 /** Inject SVG filters and apply 3D depth effect to diagram nodes. */
@@ -296,11 +327,16 @@ export function MermaidDiagram({
   nodeSpacing = 50,
   rankSpacing = 50,
   customColors,
-  backgroundPattern = "dots"
+  backgroundPattern = "dots",
+  nodeCodeMap = {},
+  onNodeClick,
+  selectedNodeIds = [],
 }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const diagramRef = useRef<HTMLDivElement>(null);
+  const clickCleanupRef = useRef<(() => void) | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [codePopover, setCodePopover] = useState<{ x: number; y: number; code: string } | null>(null);
   const { theme } = useTheme();
   const mindmap = isMindmap(code);
 
@@ -387,8 +423,9 @@ export function MermaidDiagram({
       securityLevel: "loose",
     });
 
+    const cleanCode = decodeEntitiesInMermaid(code);
     mermaid
-      .render(id, code)
+      .render(id, cleanCode)
       .then(({ svg, bindFunctions }) => {
         if (cancelled || !el) return;
         const wrapper = document.createElement("div");
@@ -412,13 +449,96 @@ export function MermaidDiagram({
           if (is3D) apply3DEffect(svgEl, theme === "dark");
         }
         bindFunctions?.(el);
+        const handlers: Array<() => void> = [];
+        // Attach click handlers for nodes with code (per-node expand)
+        if (Object.keys(nodeCodeMap).length > 0 && svgEl) {
+          svgEl.querySelectorAll("g[id]").forEach((g) => {
+            const id = g.getAttribute("id") || "";
+            for (const nodeId of Object.keys(nodeCodeMap)) {
+              if (id === nodeId || id.endsWith("-" + nodeId) || id.includes(nodeId)) {
+                const fullCode = nodeCodeMap[nodeId];
+                if (!fullCode) continue;
+                const group = g.closest("g") || g;
+                (group as HTMLElement).style.cursor = "pointer";
+                const onClick = (e: Event) => {
+                  e.stopPropagation();
+                  const ev = e as MouseEvent;
+                  setCodePopover((prev) => {
+                    if (prev?.code === fullCode) return null;
+                    return { x: ev.clientX, y: ev.clientY, code: fullCode };
+                  });
+                };
+                group.addEventListener("click", onClick);
+                handlers.push(() => group.removeEventListener("click", onClick));
+                break;
+              }
+            }
+          });
+        }
+        // Attach node click for selection (onNodeClick)
+        if (onNodeClick && svgEl) {
+          svgEl.querySelectorAll("g.node, g[id^='flowchart-'], g[id^='statediagram-'], g[id^='graph-']").forEach((g) => {
+            const id = g.getAttribute("id") || "";
+            if (id.includes("edge") || id.includes("Line") || id.includes("cluster")) return;
+            const nodeId = extractNodeIdFromSvgId(id) || id;
+            if (!nodeId) return;
+            const group = g as HTMLElement;
+            group.style.cursor = "pointer";
+            const labelEl = g.querySelector(".label, .nodeLabel, tspan");
+            const label = labelEl?.textContent?.trim() || nodeId;
+            const onClick = (e: Event) => {
+              e.stopPropagation();
+              onNodeClick(nodeId, label, e as MouseEvent);
+            };
+            group.addEventListener("click", onClick);
+            handlers.push(() => group.removeEventListener("click", onClick));
+          });
+        }
+        clickCleanupRef.current = handlers.length ? () => handlers.forEach((h) => h()) : null;
       })
       .catch((err) => {
         if (!cancelled) setError(err?.message ?? "Could not render diagram.");
       });
 
-    return () => { cancelled = true; };
-  }, [code, theme, mindmap, is3D, look, diagramTheme, fontFamily, customColors, edgeCurve, nodeSpacing, rankSpacing]);
+    return () => {
+      cancelled = true;
+      clickCleanupRef.current?.();
+    };
+  }, [code, theme, mindmap, is3D, look, diagramTheme, fontFamily, customColors, edgeCurve, nodeSpacing, rankSpacing, nodeCodeMap, onNodeClick]);
+
+  // Apply selection highlight when selectedNodeIds changes - clearly visible in diagram
+  useEffect(() => {
+    if (!diagramRef.current) return;
+    const svgEl = diagramRef.current.querySelector("svg");
+    if (!svgEl) return;
+    const selectedSet = new Set(selectedNodeIds);
+    svgEl.querySelectorAll("g.node, g[id^='flowchart-'], g[id^='statediagram-'], g[id^='graph-']").forEach((g) => {
+      const id = g.getAttribute("id") || "";
+      if (id.includes("edge") || id.includes("Line") || id.includes("cluster")) return;
+      const nodeId = extractNodeIdFromSvgId(id) || id;
+      const isSelected = selectedSet.has(nodeId) || selectedSet.has(id);
+      g.classList.toggle("diagram-node-selected", isSelected);
+      const shapes = g.querySelectorAll("rect, polygon, circle, ellipse, path");
+      shapes.forEach((shape) => {
+        const el = shape as SVGElement;
+        if (isSelected) {
+          el.style.stroke = "#6366f1";
+          el.style.strokeWidth = "4px";
+          el.style.strokeDasharray = "6 4";
+          el.setAttribute("stroke", "#6366f1");
+          el.setAttribute("stroke-width", "4");
+          el.setAttribute("stroke-dasharray", "6 4");
+        } else {
+          el.style.stroke = "";
+          el.style.strokeWidth = "";
+          el.style.strokeDasharray = "";
+          el.removeAttribute("stroke");
+          el.removeAttribute("stroke-width");
+          el.removeAttribute("stroke-dasharray");
+        }
+      });
+    });
+  }, [selectedNodeIds]);
 
   useEffect(() => {
     if (!diagramRef.current) return;
@@ -456,6 +576,34 @@ export function MermaidDiagram({
 
       {/* Render Diagram in a separate localized container to allow background to persist underneath */}
       <div ref={diagramRef} className="z-10 relative flex-1 min-w-0 min-h-0 flex items-center justify-center w-full h-full" />
+
+      {/* Code popover (per-node expand) */}
+      {codePopover && (
+        <>
+          <div
+            className="fixed inset-0 z-50"
+            aria-hidden="true"
+            onClick={() => setCodePopover(null)}
+          />
+          <div
+            className="fixed z-50 max-w-md max-h-64 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-xl p-3 text-sm font-mono whitespace-pre-wrap"
+            style={{ left: Math.min(codePopover.x, window.innerWidth - 340), top: Math.min(codePopover.y + 8, window.innerHeight - 280) }}
+            role="dialog"
+            aria-label="Full code"
+          >
+            <div className="flex justify-end mb-1">
+              <button
+                type="button"
+                onClick={() => setCodePopover(null)}
+                className="text-[var(--muted)] hover:text-[var(--foreground)] text-xs"
+              >
+                Close
+              </button>
+            </div>
+            <pre className="text-xs text-[var(--foreground)] overflow-x-auto">{codePopover.code}</pre>
+          </div>
+        </>
+      )}
 
       {error && (
         <p className="text-sm text-amber-500 z-20 absolute bottom-4" role="alert">

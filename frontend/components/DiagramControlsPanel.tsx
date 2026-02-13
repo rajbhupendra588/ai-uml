@@ -13,7 +13,8 @@ import {
     Grid,
     ArrowRight,
     ArrowDown,
-    Activity
+    Activity,
+    Code2
 } from "lucide-react";
 import { DIAGRAM_THEMES, DiagramTheme } from "./MermaidDiagram";
 
@@ -59,7 +60,13 @@ interface DiagramControlsPanelProps {
     setSpacing: (spacing: "compact" | "normal" | "wide") => void;
     layoutDirection: string;
     setLayoutDirection: (dir: string) => void;
+    canvasLayout: "auto" | "adaptive" | "horizontal";
+    setCanvasLayout: (layout: "auto" | "adaptive" | "horizontal") => void;
     onEditCode?: () => void;
+    // Code detail (when diagram has code in nodes)
+    codeDetailLevel?: "small" | "complete";
+    setCodeDetailLevel?: (level: "small" | "complete") => void;
+    diagramPlan?: Record<string, unknown> | null;
 }
 
 function CollapsibleSection({
@@ -122,9 +129,30 @@ export function DiagramControlsPanel({
     setSpacing,
     layoutDirection,
     setLayoutDirection,
+    canvasLayout,
+    setCanvasLayout,
     onEditCode,
+    codeDetailLevel = "small",
+    setCodeDetailLevel,
+    diagramPlan = null,
 }: DiagramControlsPanelProps) {
     const isFlowchart = ["architecture", "flowchart", "graph", "state", "class"].some(t => diagramType.includes(t) || diagramType === "chat");
+
+    const hasCodeInPlan = (p: Record<string, unknown> | null): boolean => {
+        if (!p) return false;
+        const check = (obj: unknown): boolean => {
+            if (typeof obj === "object" && obj !== null) {
+                const o = obj as Record<string, unknown>;
+                if ("code" in o && o.code) return true;
+                if ("snippet" in o && o.snippet) return true;
+                if (Array.isArray(obj)) return obj.some(check);
+                return Object.values(obj).some(check);
+            }
+            return false;
+        };
+        return check(p);
+    };
+    const showCodeDetail = hasCodeInPlan(diagramPlan) && setCodeDetailLevel;
 
     return (
         <>
@@ -144,6 +172,28 @@ export function DiagramControlsPanel({
             >
                 <div className="p-4 pt-14 pb-8">
                     <h3 className="text-sm font-bold text-[var(--foreground)] mb-4 px-1">Diagram Controls</h3>
+
+                    {showCodeDetail && (
+                        <CollapsibleSection title="Code Detail" icon={Code2} defaultOpen={false}>
+                            <p className="text-[10px] text-[var(--muted-foreground)] mb-2">Show code in nodes</p>
+                            <div className="flex rounded-md border border-[var(--border)] overflow-hidden">
+                                {(["small", "complete"] as const).map((level) => (
+                                    <button
+                                        key={level}
+                                        onClick={() => setCodeDetailLevel!(level)}
+                                        className={cn(
+                                            "flex-1 py-1.5 text-xs font-medium transition-colors capitalize",
+                                            codeDetailLevel === level
+                                                ? "bg-[var(--primary)] text-white"
+                                                : "bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)]"
+                                        )}
+                                    >
+                                        {level}
+                                    </button>
+                                ))}
+                            </div>
+                        </CollapsibleSection>
+                    )}
 
                     {diagramVersions.length > 1 && (
                         <CollapsibleSection title="Versions" defaultOpen={true}>
@@ -211,6 +261,27 @@ export function DiagramControlsPanel({
                             </div>
                         </div>
                     </CollapsibleSection>
+
+                    <CollapsibleSection title="Canvas Layout" icon={Layout} defaultOpen={false}>
+                        <p className="text-[10px] text-[var(--muted-foreground)] mb-2">View mode for diagram</p>
+                        <div className="flex rounded-md shadow-sm border border-[var(--border)] overflow-hidden">
+                            {["auto", "adaptive", "horizontal"].map((layout) => (
+                                <button
+                                    key={layout}
+                                    onClick={() => setCanvasLayout(layout as any)}
+                                    className={cn(
+                                        "flex-1 py-1.5 text-[10px] font-medium transition-colors capitalize",
+                                        canvasLayout === layout
+                                            ? "bg-[var(--primary)] text-white"
+                                            : "bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)]"
+                                    )}
+                                >
+                                    {layout}
+                                </button>
+                            ))}
+                        </div>
+                    </CollapsibleSection>
+
 
                     <CollapsibleSection title="Style & Effects" icon={Palette} defaultOpen={true}>
                         <div className="space-y-2">
