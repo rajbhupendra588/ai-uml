@@ -69,11 +69,23 @@ Use your real Vercel and Render URLs if different.
 |----------------|--------|
 | **Runtime**    | Python 3 |
 | **Build Command** | `pip install --upgrade pip setuptools && pip install -r requirements.txt` |
-| **Start Command** | `python -m uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| **Start Command** | `python -c "import os; import uvicorn; uvicorn.run('main:app', host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))"` |
 
 Render sets `PORT` automatically; the app already uses it.
 
-**Note:** The build command upgrades `setuptools` (needed by Razorpay for `pkg_resources` on Python 3.12+). The start command uses `python -m uvicorn` so the same environment that received `pip install` is used at runtime, avoiding `ModuleNotFoundError: No module named 'pkg_resources'`.
+**Where to set these in the Render Dashboard**
+
+1. Open [dashboard.render.com](https://dashboard.render.com) and select your **workspace**.
+2. Click your **backend service name** (e.g. `ai-uml-api`) in the list — this opens that service’s overview.
+3. In the **left sidebar** for that service, click **Settings** (or use the service’s top tabs if you see **Settings** there).
+4. On the Settings page, scroll to the **Build & Deploy** section.
+5. You should see **Build Command** and **Start Command** (and optionally Root Directory, Branch, etc.). Edit those fields, then click **Save Changes**.
+
+If you don’t see a **Build & Deploy** section, confirm you’re on the **service’s** Settings (the specific web service), not **Account settings** or **Workspace settings**. If the service was created from a **Blueprint** (`render.yaml`), its build/start commands may be managed by the blueprint; you can either change them in `render.yaml` and push, or in the service Settings if Render allows overrides.
+
+**Note:** The build command upgrades `setuptools` (needed by Razorpay for `pkg_resources` on Python 3.12+). The start command runs uvicorn from Python and reads `PORT` from the environment so the app binds correctly on Render.
+
+**If the deploy exits with status 1:** In the Render Dashboard, open the failed deploy → **Logs** tab, then scroll up to the **Run** phase. The Python traceback (e.g. `ModuleNotFoundError`, `ImportError`) appears just above the "Exited with status 1" line. Copy that traceback to fix the underlying error.
 
 ### 2.3 Backend environment variables (Render Dashboard → Environment)
 
