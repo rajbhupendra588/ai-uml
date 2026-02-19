@@ -9,9 +9,6 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 import os
-
-import razorpay.errors
-
 import logging
 
 from database import get_db
@@ -156,6 +153,7 @@ async def _create_razorpay_subscription(
     Internal helper: tries to create a Razorpay subscription.
     If the customer id is stale (test↔live mismatch), it retries with a fresh customer.
     """
+    import razorpay
     try:
         return RazorpayService.create_subscription(
             plan_id=plan_id,

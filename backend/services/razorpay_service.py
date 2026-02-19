@@ -1,19 +1,28 @@
 """
 Razorpay service for handling subscription and payment operations.
 Production-grade: signature verification, error handling, logging.
+Lazy-import of razorpay so the app can start even if setuptools/pkg_resources
+is missing (e.g. Python 3.13); subscription endpoints will then raise at runtime.
 """
 import os
 import logging
-import razorpay
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger("architectai")
 
-# Initialize Razorpay client
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 
-client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+_client = None
+
+
+def _get_client():
+    """Lazy-load Razorpay client (avoids import at app startup)."""
+    global _client
+    if _client is None:
+        import razorpay
+        _client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    return _client
 
 
 class RazorpayService:
@@ -31,7 +40,7 @@ class RazorpayService:
         if name:
             customer_data["name"] = name
 
-        customer = client.customer.create(data=customer_data)
+        customer = _get_client().customer.create(data=customer_data)
         logger.info("razorpay_customer_created", extra={"customer_id": customer.get("id"), "email": email})
         return customer
 
@@ -51,7 +60,7 @@ class RazorpayService:
             "quantity": 1,
         }
 
-        subscription = client.subscription.create(data=subscription_data)
+        subscription = _get_client().subscription.create(data=subscription_data)
         logger.info(
             "razorpay_subscription_created",
             extra={"subscription_id": subscription.get("id"), "plan_id": plan_id},
@@ -61,12 +70,12 @@ class RazorpayService:
     @staticmethod
     def fetch_subscription(subscription_id: str) -> Dict[str, Any]:
         """Fetch subscription details from Razorpay."""
-        return client.subscription.fetch(subscription_id)
+        return _get_client().subscription.fetch(subscription_id)
 
     @staticmethod
     def cancel_subscription(subscription_id: str, cancel_at_cycle_end: bool = True) -> Dict[str, Any]:
         """Cancel a subscription. Optionally cancel at end of current billing cycle."""
-        result = client.subscription.cancel(
+        result = _get_client().subscription.cancel(
             subscription_id,
             data={"cancel_at_cycle_end": 1 if cancel_at_cycle_end else 0},
         )
@@ -81,7 +90,7 @@ class RazorpayService:
     @staticmethod
     def fetch_payment(payment_id: str) -> Dict[str, Any]:
         """Fetch payment details from Razorpay."""
-        return client.payment.fetch(payment_id)
+        return _get_client().payment.fetch(payment_id)
 
     # ── Signature Verification ────────────────────────────────────────
 
@@ -99,8 +108,9 @@ class RazorpayService:
 
         Returns True if valid, False otherwise.
         """
+        import razorpay
         try:
-            client.utility.verify_subscription_payment_signature({
+            _get_client().utility.verify_subscription_payment_signature({
                 "razorpay_payment_id": razorpay_payment_id,
                 "razorpay_subscription_id": razorpay_subscription_id,
                 "razorpay_signature": razorpay_signature,
@@ -124,8 +134,9 @@ class RazorpayService:
         webhook_secret: str,
     ) -> bool:
         """Verify Razorpay webhook signature (server-to-server)."""
+        import razorpay
         try:
-            client.utility.verify_webhook_signature(
+            _get_client().utility.verify_webhook_signature(
                 webhook_body.decode("utf-8"),
                 webhook_signature,
                 webhook_secret,
