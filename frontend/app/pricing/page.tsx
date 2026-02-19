@@ -497,13 +497,13 @@ export default function PricingPage() {
                         <div className="relative z-[1] mt-5 mb-1">
                             <div className="flex items-baseline gap-1">
                                 <span className="text-5xl font-extrabold tracking-tight" style={{ color: "var(--foreground)" }}>
-                                    ₹1
+                                    {billingInterval === "annual" ? "₹2,000" : "₹250"}
                                 </span>
-                                <span className="text-sm font-medium" style={{ color: "var(--muted)" }}>/ month</span>
+                                <span className="text-sm font-medium" style={{ color: "var(--muted)" }}>/ {billingInterval === "annual" ? "year" : "month"}</span>
                             </div>
                             {billingInterval === "annual" ? (
                                 <p className="text-xs mt-1 mb-5" style={{ color: "var(--muted)" }}>
-                                    Billed as ₹12/year
+                                    Save ₹1,000 vs monthly
                                 </p>
                             ) : (
                                 <p className="text-xs mt-1 mb-5" style={{ color: "var(--muted)" }}>
