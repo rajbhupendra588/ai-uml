@@ -109,6 +109,9 @@ def _github_authorize_url() -> str:
         "scope": scope,
         "redirect_uri": GITHUB_CALLBACK_URL,
     }
+    import logging
+    logger = logging.getLogger("architectai")
+    logger.info(f"GitHub Auth URL generated with redirect_uri: {GITHUB_CALLBACK_URL}")
     return f"https://github.com/login/oauth/authorize?{urlencode(params)}"
 
 
