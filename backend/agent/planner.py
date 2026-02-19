@@ -135,6 +135,46 @@ Optional: Add "code" or "snippet" (string, 2-10 lines) to any component when the
     return plan
 
 
+def _plan_mock_architecture(prompt: str) -> dict:
+    """Generate simulated plan for architecture when LLM is unavailable or fails."""
+    logger.debug("Mock agent: generating simulated architecture plan")
+    p = prompt.lower()
+    is_repo = "repository analysis" in p or ("repository:" in p and "owner/" in p)
+    if is_repo and any(w in p for w in ["rails", "ruby", "gemfile", "heroku"]):
+        components = [
+            {"name": "Rails Web App", "type": "server"},
+            {"name": "Database", "type": "database"},
+            {"name": "Heroku", "type": "gateway"},
+        ]
+    elif is_repo:
+        components = [{"name": "Application", "type": "server"}]
+        if any(w in p for w in ["database", "db", "sql", "postgres", "sqlite"]):
+            components.append({"name": "Database", "type": "database"})
+        if any(w in p for w in ["heroku", "deploy"]):
+            components.append({"name": "Heroku", "type": "gateway"})
+        if len(components) == 1:
+            components.append({"name": "Database", "type": "database"})
+    else:
+        components = [{"name": "Load Balancer", "type": "server"}]
+        if any(w in p for w in ["auth", "login", "onboarding", "buyer", "supplier"]):
+            components.append({"name": "Identity Service", "type": "auth"})
+        if "payment" in p:
+            components.append({"name": "Payment Gateway", "type": "server"})
+            components.append({"name": "Ledger Service", "type": "server"})
+        if "invoice" in p or "billing" in p:
+            components.append({"name": "Invoice Engine", "type": "function"})
+        if any(w in p for w in ["compliance", "risk", "security"]):
+            components.append({"name": "Risk Engine", "type": "shield"})
+        if any(w in p for w in ["workflow", "approval"]):
+            components.append({"name": "Workflow Manager", "type": "queue"})
+        if any(w in p for w in ["database", "sql", "reporting", "reconciliation", "settlement"]):
+            components.append({"name": "Primary DB", "type": "database"})
+            components.append({"name": "Data Whse", "type": "database"})
+        if len(components) == 1:
+            components.append({"name": "API Service", "type": "server"})
+    return {"components": components}
+
+
 def planner_node(state: AgentState) -> dict:
     """
     Plans the diagram based on prompt and diagram_type.
@@ -171,42 +211,9 @@ def planner_node(state: AgentState) -> dict:
         return {"diagram_plan": plan}
 
     if not has_llm:
-        logger.debug("Mock agent: generating simulated plan")
-        p = prompt.lower()
-        is_repo = "repository analysis" in p or ("repository:" in p and "owner/" in p)
-        if is_repo and any(w in p for w in ["rails", "ruby", "gemfile", "heroku"]):
-            components = [
-                {"name": "Rails Web App", "type": "server"},
-                {"name": "Database", "type": "database"},
-                {"name": "Heroku", "type": "gateway"},
-            ]
-        elif is_repo:
-            components = [{"name": "Application", "type": "server"}]
-            if any(w in p for w in ["database", "db", "sql", "postgres", "sqlite"]):
-                components.append({"name": "Database", "type": "database"})
-            if any(w in p for w in ["heroku", "deploy"]):
-                components.append({"name": "Heroku", "type": "gateway"})
-            if len(components) == 1:
-                components.append({"name": "Database", "type": "database"})
-        else:
-            components = [{"name": "Load Balancer", "type": "server"}]
-            if any(w in p for w in ["auth", "login", "onboarding", "buyer", "supplier"]):
-                components.append({"name": "Identity Service", "type": "auth"})
-            if "payment" in p:
-                components.append({"name": "Payment Gateway", "type": "server"})
-                components.append({"name": "Ledger Service", "type": "server"})
-            if "invoice" in p or "billing" in p:
-                components.append({"name": "Invoice Engine", "type": "function"})
-            if any(w in p for w in ["compliance", "risk", "security"]):
-                components.append({"name": "Risk Engine", "type": "shield"})
-            if any(w in p for w in ["workflow", "approval"]):
-                components.append({"name": "Workflow Manager", "type": "queue"})
-            if any(w in p for w in ["database", "sql", "reporting", "reconciliation", "settlement"]):
-                components.append({"name": "Primary DB", "type": "database"})
-                components.append({"name": "Data Whse", "type": "database"})
-            if len(components) == 1:
-                components.append({"name": "API Service", "type": "server"})
-        return {"diagram_plan": {"components": components}}
+        plan = _plan_mock_architecture(prompt)
+        return {"diagram_plan": plan}
+
 
     is_repo_arch = "repository analysis" in prompt.lower() or ("repository:" in prompt.lower() and "owner/" in prompt.lower())
     repo_arch_hint = ""
@@ -249,6 +256,10 @@ Use 3-12 components. Be specific with names and types."""
         )
     except Exception as e:
         logger.exception("LLM error: %s", e)
-        plan = get_valid_plan("architecture", raw_plan if isinstance(raw_plan, dict) else {})
+        # Fallback to smart mock plan if LLM fails (e.g. auth error)
+        plan = _plan_mock_architecture(prompt)
+        # Ensure it's valid
+        plan = get_valid_plan("architecture", plan)
+
 
     return {"diagram_plan": plan}

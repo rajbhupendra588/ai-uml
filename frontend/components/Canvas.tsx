@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import HardwareNode from "./HardwareNode";
 import { GeneratingOverlay } from "./GeneratingOverlay";
 import { DiagramTypeSelector } from "./DiagramTypeSelector";
+import { ModelSelector } from "./ModelSelector";
 import { DiagramDownloadMenu } from "./DiagramDownloadMenu";
 import { DiagramZoomControls } from "./DiagramZoomControls";
 import { EditNodePanel, type EditingNode } from "./EditNodePanel";
@@ -662,6 +663,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             current_mermaid: diagramCode,
             model: selectedModel || null,
             code_detail_level: "small",
+            diagram_type: diagramTypeToSend,
           }),
         });
         const data = await response.json();
@@ -1281,6 +1283,16 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             <DiagramTypeSelector
               value={diagramType}
               onChange={setDiagramType}
+              disabled={loading}
+            />
+          </div>
+
+          {/* Model selector */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            <ModelSelector
+              value={selectedModel}
+              options={modelOptions}
+              onChange={setSelectedModel}
               disabled={loading}
             />
           </div>

@@ -193,42 +193,60 @@ def _generate_hld_versions(plan: dict, code_detail_level: str = "small") -> list
     lines = ["flowchart TB"]
     lines.append('    User(["👤 Users"])')
     node_counter = 0
-    all_nodes = []
-    for layer_key in ["presentation", "application", "business"]:
+    # Track nodes per layer for smart connections
+    compact_layer_nodes: dict[str, list[str]] = {}
+    compact_layer_order = ["presentation", "application", "business", "data", "external", "infrastructure"]
+    active_compact_layers = [l for l in compact_layer_order if layers.get(l)]
+
+    for layer_key in active_compact_layers:
         components = layers.get(layer_key, [])
+        if not components:
+            continue
+        compact_layer_nodes[layer_key] = []
         for comp in components:
             node_id = f"c{node_counter}"
             node_counter += 1
             name = layouts._sanitize_mermaid_label((comp.get("name") or "")[:25])
             comp_type = (comp.get("type") or "service").lower()
             icon = type_icons.get(comp_type, "📦")
-            lines.append(f'    {node_id}["{icon} {name}"]')
-            all_nodes.append(node_id)
-    data_components = layers.get("data", [])
-    if data_components:
-        lines.append('    subgraph DataLayer["🗄️ Data Layer"]')
-        lines.append("        direction LR")
-        data_nodes = []
-        for comp in data_components:
-            node_id = f"c{node_counter}"
-            node_counter += 1
-            name = layouts._sanitize_mermaid_label((comp.get("name") or "")[:20])
-            comp_type = (comp.get("type") or "database").lower()
-            icon = type_icons.get(comp_type, "🗄️")
-            lines.append(f'        {node_id}[("{icon} {name}")]')
-            data_nodes.append(node_id)
-        lines.append("    end")
-        all_nodes.extend(data_nodes)
-    if all_nodes:
-        lines.append(f"    User --> {all_nodes[0]}")
-    for i in range(min(3, len(all_nodes) - 1)):
-        lines.append(f"    {all_nodes[i]} --> {all_nodes[i+1]}")
+            if comp_type == "database":
+                lines.append(f'    {node_id}[("{icon} {name}")]')
+            else:
+                lines.append(f'    {node_id}["{icon} {name}"]')
+            compact_layer_nodes[layer_key].append(node_id)
+
+    # Connect User to presentation layer (or first available layer)
+    first_layer = active_compact_layers[0] if active_compact_layers else None
+    if first_layer and compact_layer_nodes.get(first_layer):
+        for node_id in compact_layer_nodes[first_layer]:
+            lines.append(f"    User --> {node_id}")
+
+    # Connect each layer to the next — every node in current layer connects to every node in next layer
+    for i in range(len(active_compact_layers) - 1):
+        current_layer = active_compact_layers[i]
+        next_layer = active_compact_layers[i + 1]
+        current_nodes = compact_layer_nodes.get(current_layer, [])
+        next_nodes = compact_layer_nodes.get(next_layer, [])
+        if current_nodes and next_nodes:
+            # If both layers are small, connect all-to-all; otherwise connect smartly
+            if len(current_nodes) <= 3 and len(next_nodes) <= 3:
+                for cn in current_nodes:
+                    for nn in next_nodes:
+                        lines.append(f"    {cn} --> {nn}")
+            else:
+                # Fan-out from each current node to first node of next layer,
+                # plus last current to all next for coverage
+                for cn in current_nodes:
+                    lines.append(f"    {cn} --> {next_nodes[0]}")
+                if len(next_nodes) > 1:
+                    lines.append(f"    {current_nodes[-1]} --> {next_nodes[-1]}")
+
     lines.extend(layouts._get_mermaid_styles())
     versions.append({
         "code": "\n".join(lines),
         "layout": "Compact",
         "direction": "TB",
-        "description": "Simplified compact view",
+        "description": "Simplified compact view with relationships",
     })
 
     return versions

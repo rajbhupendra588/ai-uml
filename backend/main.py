@@ -154,11 +154,18 @@ def unhandled_exception_handler(request: Request, exc: Exception):
 # --- Schemas ---
 from diagram_types import DiagramType
 
+from pydantic import BaseModel, Field, field_validator
+
 class PromptRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     diagram_type: DiagramType = Field(default="architecture", description="UML diagram type")
     model: str | None = Field(default=None, description="OpenRouter model id (e.g. arcee-ai/trinity-large-preview:free)")
     code_detail_level: str | None = Field(default="small", description="Code display: small or complete")
+
+    @field_validator("diagram_type", mode="before")
+    @classmethod
+    def lowercase_diagram_type(cls, v):
+        return v.lower() if isinstance(v, str) else v
 
 
 class GenerateFromRepoRequest(BaseModel):
@@ -167,11 +174,21 @@ class GenerateFromRepoRequest(BaseModel):
     model: str | None = Field(default=None, description="OpenRouter model id")
     code_detail_level: str | None = Field(default="small", description="Code display: small or complete")
 
+    @field_validator("diagram_type", mode="before")
+    @classmethod
+    def lowercase_diagram_type(cls, v):
+        return v.lower() if isinstance(v, str) else v
+
 
 class GenerateFromPlanRequest(BaseModel):
     diagram_plan: dict = Field(..., description="Plan from POST /api/v1/plan")
     diagram_type: DiagramType = Field(..., description="Same diagram_type used for /plan")
     code_detail_level: str | None = Field(default="small", description="Code display: small or complete")
+
+    @field_validator("diagram_type", mode="before")
+    @classmethod
+    def lowercase_diagram_type(cls, v):
+        return v.lower() if isinstance(v, str) else v
 
 
 class UpdateDiagramRequest(BaseModel):
@@ -179,6 +196,12 @@ class UpdateDiagramRequest(BaseModel):
     current_mermaid: str = Field(..., min_length=1, description="Current Mermaid diagram code to update")
     model: str | None = Field(default=None, description="OpenRouter model id")
     code_detail_level: str | None = Field(default="small", description="Code display: small or complete")
+    diagram_type: DiagramType | None = Field(default=None, description="New diagram type if changing")
+
+    @field_validator("diagram_type", mode="before")
+    @classmethod
+    def lowercase_diagram_type(cls, v):
+        return v.lower() if isinstance(v, str) else v
 
 
 class ShareDiagramRequest(BaseModel):
@@ -240,8 +263,8 @@ async def generate_diagram(
 
     try:
         logger.info(
-            "generate_request",
-            extra={"prompt_length": len(body.prompt), "diagram_type": body.diagram_type, "model": body.model or "default"},
+            "generate_request | diagram_type=%s | model=%s | prompt_length=%d",
+            body.diagram_type, body.model or "default", len(body.prompt),
         )
         start = time.perf_counter()
         result = run_agent(body.prompt, body.diagram_type, body.model, body.code_detail_level)
@@ -264,14 +287,8 @@ async def generate_diagram(
                 logger.error(f"Token tracking failed but continuing: {token_err}", extra={"user_id": current_user.id, "tokens": total_tokens})
         
         logger.info(
-            "generate_success",
-            extra={
-                "diagram_type": body.diagram_type,
-                "duration_ms": duration_ms,
-                "has_mermaid": bool(result.get("mermaid")),
-                "versions_count": len(result.get("versions") or []),
-                "estimated_tokens": total_tokens,
-            },
+            "generate_success | diagram_type=%s | duration_ms=%d | tokens=%d",
+            body.diagram_type, duration_ms, total_tokens,
         )
         return result
     except HTTPException:
@@ -302,11 +319,11 @@ async def update_diagram_endpoint(
 
     try:
         logger.info(
-            "update_request",
-            extra={"prompt_length": len(body.prompt), "mermaid_length": len(body.current_mermaid), "model": body.model or "default"},
+            "update_request | diagram_type=%s | model=%s | prompt_length=%d",
+            body.diagram_type or "none", body.model or "default", len(body.prompt),
         )
         start = time.perf_counter()
-        result = update_diagram(body.current_mermaid, body.prompt, body.model)
+        result = update_diagram(body.current_mermaid, body.prompt, body.model, body.diagram_type)
         duration_ms = round((time.perf_counter() - start) * 1000)
         
         # Estimate token usage
@@ -324,8 +341,8 @@ async def update_diagram_endpoint(
                 logger.error(f"Token tracking failed but continuing: {token_err}", extra={"user_id": current_user.id, "tokens": total_tokens})
         
         logger.info(
-            "update_success",
-            extra={"duration_ms": duration_ms, "has_mermaid": bool(result.get("mermaid")), "estimated_tokens": total_tokens},
+            "update_success | diagram_type=%s | duration_ms=%d | tokens=%d",
+            body.diagram_type or "none", duration_ms, total_tokens,
         )
         return result
     except HTTPException:

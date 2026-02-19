@@ -8,6 +8,32 @@ from agent.llm_setup import get_llm_for_request, has_llm, llm
 logger = logging.getLogger("architectai.agent.chat")
 
 
+def _detect_mermaid_type(mermaid_code: str) -> str:
+    """Detect the Mermaid diagram type from mermaid code. Returns a normalized type string."""
+    code = (mermaid_code or "").strip().lower()
+    if code.startswith("sequencediagram"):
+        return "sequenceDiagram"
+    if code.startswith("classdiagram"):
+        return "classDiagram"
+    if code.startswith("statediagram"):
+        return "stateDiagram"
+    if code.startswith("erdiagram"):
+        return "erDiagram"
+    if code.startswith("gantt"):
+        return "gantt"
+    if code.startswith("pie"):
+        return "pie"
+    if code.startswith("gitgraph"):
+        return "gitGraph"
+    if code.startswith("journey"):
+        return "journey"
+    if code.startswith("mindmap"):
+        return "mindmap"
+    if code.startswith("flowchart") or code.startswith("graph"):
+        return "flowchart"
+    return "unknown"
+
+
 def generate_chat_mermaid(prompt: str, llm_to_use) -> str:
     """
     Generate generic Mermaid code for 'Chat' mode.
@@ -40,10 +66,11 @@ Rules:
         return "graph TD\n    Error[Generation Failed]\n    Details[Check Logs]"
 
 
-def update_diagram(current_mermaid: str, prompt: str, model: str | None = None) -> dict:
+def update_diagram(current_mermaid: str, prompt: str, model: str | None = None, diagram_type: str | None = None) -> dict:
     """
     Update an existing diagram based on user refinement prompt.
     Takes current Mermaid code and user's update request, returns updated diagram.
+    If diagram_type is provided and differs from current diagram, do a fresh generation.
     """
     llm_to_use = get_llm_for_request(model) if model else get_llm_for_request(None)
     if not llm_to_use:
@@ -55,10 +82,60 @@ def update_diagram(current_mermaid: str, prompt: str, model: str | None = None) 
             "selectedVersion": 0,
         }
 
-    system_prompt = """You are a Mermaid.js expert. The user has an existing diagram and wants to update it.
+    # Detect if the user changed diagram type (e.g. from architecture to hld, or sequence to class)
+    # If so, do a FRESH generation with the new type instead of updating the old mermaid
+    if diagram_type:
+        dt = diagram_type.lower()
+        # Always do fresh generation when diagram_type is explicitly set and differs
+        # from what the current diagram looks like it was built for.
+        # We check both the mermaid syntax type AND the semantic type.
+        current_type = _detect_mermaid_type(current_mermaid)
+
+        # Semantic types that should always trigger fresh gen when switching between them
+        # (even if they share the same underlying mermaid syntax like flowchart)
+        always_fresh_types = {"architecture", "hld", "class", "sequence", "usecase",
+                              "activity", "state", "component", "deployment",
+                              "flowchart", "mindtree"}
+
+        if dt in always_fresh_types:
+            logger.info("Diagram type '%s' requested — doing fresh generation (current mermaid type: '%s')", dt, current_type)
+            try:
+                from agent import run_agent
+                result = run_agent(prompt, dt, model, "small")
+                return result
+            except Exception as e:
+                logger.exception("Fresh generation after type change failed: %s", e)
+                # Fall through to update approach as fallback
+
+    # Map our backend diagram types to Mermaid keywords for LLM hint
+    type_hint = ""
+    if diagram_type:
+        d_map = {
+            "sequence": "sequenceDiagram",
+            "class": "classDiagram",
+            "state": "stateDiagram-v2",
+            "flowchart": "flowchart TD",
+            "er": "erDiagram",
+            "gantt": "gantt",
+            "pie": "pie",
+            "git": "gitGraph",
+            "journey": "journey",
+            "mindmap": "mindmap",
+            "mindtree": "mindmap",
+            "architecture": "flowchart TD",
+            "hld": "flowchart TD",
+            "usecase": "flowchart TB",
+            "activity": "flowchart TD",
+            "component": "flowchart TB",
+            "deployment": "flowchart LR",
+        }
+        target_diagram = d_map.get(diagram_type.lower(), diagram_type)
+        type_hint = f"IMPORTANT: The output MUST be a valid {target_diagram} diagram. The output MUST start with '{target_diagram}' (or valid mermaid syntax for it)."
+
+    system_prompt = f"""You are a Mermaid.js expert. The user has an existing diagram and wants to update it.
 Rules:
 1. Return ONLY the updated Mermaid code. No markdown fences (```mermaid), no explanations.
-2. Keep the same diagram type (flowchart, sequenceDiagram, classDiagram, etc.) unless the user explicitly asks to change it.
+2. {type_hint if type_hint else "Keep the same diagram type (flowchart, sequenceDiagram, classDiagram, etc.) unless the user explicitly asks to change it."}
 3. Apply the user's requested changes to the existing diagram. Add, remove, or modify elements as requested.
 4. Preserve structure and styling that the user did not ask to change.
 5. Ensure syntax is valid and up-to-date."""

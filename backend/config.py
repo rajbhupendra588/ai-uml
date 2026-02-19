@@ -60,4 +60,4 @@ _GITHUB_CALLBACK = os.getenv("GITHUB_CALLBACK_URL", "").strip()
 GITHUB_CALLBACK_URL = _GITHUB_CALLBACK if _GITHUB_CALLBACK else f"{FRONTEND_URL}/auth/callback"
 
 # Rate limits (SlowAPI format: "5/minute", "30/minute", etc.). Dev default higher to avoid 429 during testing.
-RATE_LIMIT_GENERATE = os.getenv("RATE_LIMIT_GENERATE", "30/minute" if ENVIRONMENT == "development" else "5/minute")
+RATE_LIMIT_GENERATE = os.getenv("RATE_LIMIT_GENERATE", "120/minute" if ENVIRONMENT == "development" else "5/minute")
