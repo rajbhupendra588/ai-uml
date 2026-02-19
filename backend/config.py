@@ -46,7 +46,8 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
 
 # Database: use Supabase Postgres when SUPABASE_DATABASE_URL is set (user/login persisted in Supabase)
-_SUPABASE_URL = os.getenv("SUPABASE_DATABASE_URL", "").strip()
+_SUPABASE_POOLER = os.getenv("SUPABASE_DATABASE_URL_POOLER", "").strip()
+_SUPABASE_URL = _SUPABASE_POOLER or os.getenv("SUPABASE_DATABASE_URL", "").strip()
 DATABASE_URL = _SUPABASE_URL or os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./architectai.db")
 USING_SUPABASE = bool(_SUPABASE_URL)
 
