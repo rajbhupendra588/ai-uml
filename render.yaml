@@ -7,15 +7,16 @@ services:
     region: oregon  # or frankfurt, singapore
     rootDir: backend
 
-    buildCommand: pip install --upgrade pip setuptools && pip install -r requirements.txt
-    # Read PORT in Python so env var is always used (avoids $PORT shell expansion issues)
-startCommand: python -c "import os; import uvicorn; uvicorn.run('main:app', host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))"
+    # setuptools must be installed first (razorpay uses pkg_resources; not in stdlib on Python 3.12+)
+    buildCommand: pip install --upgrade pip "setuptools>=65" && pip install -r requirements.txt
+    # rootDir is backend, so the app module is main:app (not backend.main:app)
+    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
 
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: PYTHON_VERSION
-        value: "3.11.0"
+        value: "3.12.0"
       # Add these in Render Dashboard → Environment (or as secret env vars):
       # CORS_ORIGINS, FRONTEND_URL, API_BASE_URL, OPENROUTER_API_KEY, SECRET_KEY
       # Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
