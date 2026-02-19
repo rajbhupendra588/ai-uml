@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { getDiagramsUrl, getDiagramUrl } from "@/lib/api";
 import { getAuthHeaders } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { sanitizeMermaidCode } from "@/lib/sanitizeMermaid";
 import type { Node, Edge } from "@xyflow/react";
 
 interface SaveDiagramModalProps {
@@ -38,9 +39,10 @@ export function SaveDiagramModal({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const safeMermaid = diagramCode != null ? sanitizeMermaidCode(diagramCode) : null;
   const payload = {
-    mermaid: diagramCode,
-    code: diagramCode,
+    mermaid: safeMermaid,
+    code: safeMermaid,
     nodes,
     edges,
     diagram_type: diagramType,

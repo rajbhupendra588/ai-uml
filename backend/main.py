@@ -18,7 +18,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from asgi_correlation_id import CorrelationIdMiddleware, CorrelationIdFilter
 
-from config import API_BASE_URL, CORS_ORIGINS, API_V1_PREFIX, DATABASE_URL, ENVIRONMENT, FRONTEND_URL, LOG_LEVEL, MAX_PROMPT_LENGTH, REPO_ANALYSIS_MAX_LENGTH, USING_SUPABASE
+from config import API_BASE_URL, CORS_ORIGINS, API_V1_PREFIX, DATABASE_URL, ENVIRONMENT, FRONTEND_URL, LOG_LEVEL, MAX_PROMPT_LENGTH, RATE_LIMIT_GENERATE, REPO_ANALYSIS_MAX_LENGTH, USING_SUPABASE
 from database import get_db
 from auth import get_current_user_from_request
 
@@ -223,7 +223,7 @@ def list_models():
 
 
 @app.post(f"{API_V1_PREFIX}/generate")
-@limiter.limit("5/minute")
+@limiter.limit(RATE_LIMIT_GENERATE)
 async def generate_diagram(
     request: Request,
     body: PromptRequest,
@@ -285,7 +285,7 @@ async def generate_diagram(
 
 
 @app.post(f"{API_V1_PREFIX}/update")
-@limiter.limit("5/minute")
+@limiter.limit(RATE_LIMIT_GENERATE)
 async def update_diagram_endpoint(
     request: Request,
     body: UpdateDiagramRequest,

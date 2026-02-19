@@ -68,8 +68,10 @@ import { Sparkles, FilePlus2, Save, FolderOpen, Pencil, Palette, Code2 } from "l
 import { SaveDiagramModal } from "./SaveDiagramModal";
 import { DiagramsListPanel } from "./DiagramsListPanel";
 import { getAuthHeaders, getToken } from "@/lib/auth";
+import { useAuth } from "@/components/AuthProvider";
 import { SignupModal } from "@/components/auth/SignupModal";
 import { EntityEditPopup } from "./EntityEditPopup";
+import { updateNodeLabel } from "@/lib/updateMermaidNode";
 
 const EMPTY_NODES: Node[] = [];
 const MAX_UNDO_HISTORY = 50;
@@ -281,6 +283,7 @@ export interface CanvasProps {
 }
 
 function CanvasInner({ onEditCode }: CanvasProps) {
+  const { user } = useAuth();
   const [nodes, setNodes, onNodesChangeBase] = useNodesState(EMPTY_NODES);
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
@@ -319,7 +322,6 @@ function CanvasInner({ onEditCode }: CanvasProps) {
   const [diagramFont, setDiagramFont] = useState<string>("Inter, sans-serif");
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [showCode, setShowCode] = useState(false);
-  const [codeDetailLevel, setCodeDetailLevel] = useState<"small" | "complete">("small");
   const [diagramControlsOpen, setDiagramControlsOpen] = useState(true);
 
   // Entity editing state
@@ -391,11 +393,9 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     const loadUserSpecificData = async () => {
       try {
         const sidebar = localStorage.getItem("showSideKick");
-        const codeLevel = localStorage.getItem("codeDetailLevel");
         const lastUserId = localStorage.getItem("lastUserId");
 
         if (sidebar !== null) setShowSideKick(sidebar === "true");
-        if (codeLevel === "complete" || codeLevel === "small") setCodeDetailLevel(codeLevel);
 
         // Get current user to check if it's the same user
         const { fetchUser } = await import("@/lib/auth");
@@ -441,12 +441,6 @@ function CanvasInner({ onEditCode }: CanvasProps) {
       localStorage.setItem("showSideKick", String(showSideKick));
     } catch { /* ignore */ }
   }, [showSideKick]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("codeDetailLevel", codeDetailLevel);
-    } catch { /* ignore */ }
-  }, [codeDetailLevel]);
 
   // Persist context messages (cap at 50)
   useEffect(() => {
@@ -667,7 +661,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             prompt: trimmedPrompt,
             current_mermaid: diagramCode,
             model: selectedModel || null,
-            code_detail_level: codeDetailLevel,
+            code_detail_level: "small",
           }),
         });
         const data = await response.json();
@@ -711,7 +705,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             prompt: trimmedPrompt,
             diagram_type: diagramTypeToSend,
             model: selectedModel || null,
-            code_detail_level: codeDetailLevel,
+            code_detail_level: "small",
           }),
         });
         const data = await response.json();
@@ -753,7 +747,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
           prompt: trimmedPrompt,
           diagram_type: diagramTypeToSend,
           model: selectedModel || null,
-          code_detail_level: codeDetailLevel,
+          code_detail_level: "small",
         }),
       });
 
@@ -833,7 +827,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     } finally {
       setLoading(false);
     }
-  }, [diagramType, diagramCode, selectedModel, planFirstMode, codeDetailLevel, setNodes, setEdges]);
+  }, [diagramType, diagramCode, selectedModel, planFirstMode, setNodes, setEdges]);
 
   const handleConfirmPlan = useCallback(async () => {
     if (!pendingPlan) return;
@@ -845,7 +839,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
         body: JSON.stringify({
           diagram_plan: pendingPlan.diagram_plan,
           diagram_type: toValidDiagramType(pendingPlan.diagram_type),
-          code_detail_level: codeDetailLevel,
+          code_detail_level: "small",
         }),
       });
       const data = await response.json();
@@ -899,7 +893,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     } finally {
       setLoading(false);
     }
-  }, [pendingPlan, codeDetailLevel, setNodes, setEdges]);
+  }, [pendingPlan, setNodes, setEdges]);
 
   const handleCancelPlan = useCallback(() => {
     setPendingPlan(null);
@@ -927,7 +921,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             repo_url: (repoUrl || "").trim(),
             diagram_type: toValidDiagramType(diagramType),
             model: selectedModel || null,
-            code_detail_level: codeDetailLevel,
+            code_detail_level: "small",
           }),
         });
 
@@ -1065,21 +1059,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     setEditingNode(null);
   }, []);
 
-  /* Detect code-level intent from chat; returns adjusted prompt. If only code-level change, may trigger regenerate. */
   const maybeAdjustCodeLevelFromPrompt = useCallback((prompt: string): { prompt: string; regenerateOnly?: boolean } => {
-    const lower = prompt.toLowerCase().trim();
-    if (/\b(show|display|use)\s+(full|complete|entire)\s+code\b/.test(lower) || /\bshow\s+complete\s+code\b/.test(lower)) {
-      setCodeDetailLevel("complete");
-      toast.success("Code level set to Complete");
-      const remainder = prompt.replace(/\b(show|display|use)\s+(full|complete|entire)\s+code\b/gi, "").replace(/\bshow\s+complete\s+code\b/gi, "").trim();
-      return { prompt: remainder || "Refresh diagram", regenerateOnly: !remainder };
-    }
-    if (/\b(show|display|use)\s+small\b/.test(lower) || /\bcollapse\s+code\b/.test(lower) || /\bshow\s+less\s+code\b/.test(lower)) {
-      setCodeDetailLevel("small");
-      toast.success("Code level set to Small");
-      const remainder = prompt.replace(/\b(show|display|use)\s+small\b/gi, "").replace(/\bcollapse\s+code\b/gi, "").replace(/\bshow\s+less\s+code\b/gi, "").trim();
-      return { prompt: remainder || "Refresh diagram", regenerateOnly: !remainder };
-    }
     return { prompt };
   }, []);
 
@@ -1094,7 +1074,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
         body: JSON.stringify({
           diagram_plan: diagramPlan,
           diagram_type: toValidDiagramType(diagramType),
-          code_detail_level: codeDetailLevel,
+          code_detail_level: "small",
         }),
       });
       const data = await response.json();
@@ -1113,7 +1093,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     } finally {
       setLoading(false);
     }
-  }, [diagramPlan, diagramCode, diagramType, codeDetailLevel]);
+  }, [diagramPlan, diagramCode, diagramType]);
 
   /* SideKick chat message handler - combines context + generates */
   const handleSideKickMessage = useCallback(
@@ -1222,19 +1202,17 @@ function CanvasInner({ onEditCode }: CanvasProps) {
 
     let updatedCode = diagramCode;
 
-    // Update label in code
-    if (updates.label) {
-      // Pattern: nodeId[oldLabel] or nodeId(oldLabel) or nodeId{oldLabel}, etc.
-      // Escape special regex characters in entityId to prevent regex injection
-      const escapedEntityId = entityId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const labelPattern = new RegExp(`(${escapedEntityId})([\\[({<])([^\\]\\)}>]+)([\\]\\)}>])`, 'g');
-      updatedCode = updatedCode.replace(labelPattern, `$1$2${updates.label}$4`);
+    if (updates.label != null && updates.label.trim() !== "") {
+      const result = updateNodeLabel(diagramCode, entityId, updates.label.trim());
+      if (!result.success) {
+        toast.error(result.error ?? "Could not update node");
+        return;
+      }
+      updatedCode = result.code;
     }
 
-    // Add style directive for colors and fonts
-    // Mermaid supports class styles or inline styles
-    // We'll add a classDef and apply it to the node
-    const hasStyles = updates.fill || updates.stroke || updates.fontFamily;
+    // Add style directive for colors and fonts (classDef + class)
+    const hasStyles = updates.fill || updates.stroke || updates.fontFamily || updates.fontSize;
     if (hasStyles) {
       const className = `style_${entityId}`;
       let styleDef = `    classDef ${className}`;
@@ -1271,7 +1249,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
 
     setDiagramCode(updatedCode);
     setEditingEntity(null);
-    toast.success("Entity updated");
+    toast.success("Node updated");
   }, [diagramCode]);
 
   const handleEntityCancel = useCallback(() => {
@@ -1318,38 +1296,6 @@ function CanvasInner({ onEditCode }: CanvasProps) {
             />
             <span>Plan first</span>
           </label>
-
-          {/* Code detail toggle */}
-          <div className="hidden lg:flex items-center gap-1 shrink-0">
-            <Code2 className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden />
-            <span className="text-xs font-medium text-muted">Code:</span>
-            <div className="flex rounded-md border border-[var(--border)] bg-[var(--card)] p-0.5">
-              <button
-                type="button"
-                onClick={() => setCodeDetailLevel("small")}
-                className={cn(
-                  "px-2 py-0.5 text-xs font-medium rounded transition",
-                  codeDetailLevel === "small"
-                    ? "bg-[var(--primary)] text-white"
-                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
-                )}
-              >
-                Small
-              </button>
-              <button
-                type="button"
-                onClick={() => setCodeDetailLevel("complete")}
-                className={cn(
-                  "px-2 py-0.5 text-xs font-medium rounded transition",
-                  codeDetailLevel === "complete"
-                    ? "bg-[var(--primary)] text-white"
-                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
-                )}
-              >
-                Complete
-              </button>
-            </div>
-          </div>
 
           {/* Spacer */}
           <div className="flex-1 min-w-2" />
@@ -1415,6 +1361,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
                 disabled={loading}
                 open={downloadMenuOpen}
                 onOpenChange={setDownloadMenuOpen}
+                userPlan={user?.plan}
               />
             </div>
           )}
@@ -1605,8 +1552,6 @@ function CanvasInner({ onEditCode }: CanvasProps) {
                 setCanvasLayout={setCanvasLayout}
                 diagramType={diagramType}
                 onEditCode={onEditCode ? () => onEditCode(diagramCode!) : undefined}
-                codeDetailLevel={codeDetailLevel}
-                setCodeDetailLevel={setCodeDetailLevel}
                 diagramPlan={diagramPlan}
               />
 

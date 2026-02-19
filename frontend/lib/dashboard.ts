@@ -123,7 +123,7 @@ export const PLAN_INFO: Record<
         name: "Free",
         price: "₹0/month",
         features: [
-            "5 diagrams/month",
+            "10 diagrams/month",
             "10K tokens/month",
             "All diagram types",
             "Basic themes",
@@ -164,3 +164,13 @@ export const PLAN_INFO: Record<
         color: "indigo",
     },
 };
+
+/** Short label for plan badge in header (Free / Pro / Team). */
+export function getPlanBadgeLabel(plan?: string | null): string {
+    if (!plan) return "Free";
+    const p = plan.toLowerCase();
+    if (p === "free") return "Free";
+    if (p === "pro" || p === "pro_annual") return "Pro";
+    if (p === "team") return "Team";
+    return PLAN_INFO[plan]?.name ?? "Free";
+}

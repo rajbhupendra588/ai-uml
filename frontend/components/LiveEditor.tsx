@@ -5,6 +5,7 @@ import { MermaidDiagram, type DiagramTheme, DIAGRAM_THEMES } from "./MermaidDiag
 import { useTheme } from "./ThemeProvider";
 import { DiagramDownloadMenu } from "./DiagramDownloadMenu";
 import { DiagramZoomControls } from "./DiagramZoomControls";
+import { useAuth } from "@/components/AuthProvider";
 import { MERMAID_EXAMPLES } from "@/lib/examples";
 import {
     Copy,
@@ -26,6 +27,7 @@ import { tokenizeMermaidCode, SYNTAX_COLORS } from "@/lib/mermaidSyntaxHighlight
 
 export function LiveEditor({ initialCode }: { initialCode?: string }) {
     const { theme, toggleTheme } = useTheme();
+    const { user } = useAuth();
     const [code, setCode] = useState(initialCode || MERMAID_EXAMPLES["Flowchart"]);
 
     // Update code when initialCode changes (if switching from canvas)
@@ -237,11 +239,12 @@ export function LiveEditor({ initialCode }: { initialCode?: string }) {
 
                     <DiagramDownloadMenu
                         containerRef={previewRef}
-                        diagramType="flowchart" // Generic fallback
-                        nodes={[]} // Not used for image export
-                        edges={[]} // Not used for image export
+                        diagramType="flowchart"
+                        nodes={[]}
+                        edges={[]}
                         diagramCode={debouncedCode}
                         onPrepareExport={async (fn) => await fn()}
+                        userPlan={user?.plan}
                     />
                 </div>
             </div>

@@ -12,6 +12,7 @@ from sqlalchemy import func
 from database import get_db
 from auth import get_current_user_required
 from models import User, Diagram
+from usage import LIMITS as USAGE_LIMITS
 
 
 router = APIRouter()
@@ -129,13 +130,19 @@ async def get_usage_stats(
     )
     usage_history = [{"date": str(row[0]), "count": row[1]} for row in history_result.fetchall()]
     
-    # Plan limits
-    plan_limits = {"free": 10, "pro": 100, "team": 500}
-    plan_limit = plan_limits.get(current_user.plan, 10)
-    plan_used_percent = min(100, (current_user.diagrams_this_month / plan_limit) * 100) if plan_limit > 0 else 0
+    # Plan limits: use usage.LIMITS for free (single source of truth); Pro/Team use sentinels for display
+    UNLIMITED_DIAGRAMS = 999999
+    plan_limits = {
+        "free": USAGE_LIMITS.get("free", 10),
+        "pro": UNLIMITED_DIAGRAMS,
+        "pro_annual": UNLIMITED_DIAGRAMS,
+        "team": 500,
+    }
+    plan_limit = plan_limits.get(current_user.plan) or USAGE_LIMITS.get("free", 10)
+    plan_used_percent = min(100, (current_user.diagrams_this_month / plan_limit) * 100) if plan_limit and plan_limit > 0 else 0
     
-    # Token limits per plan (monthly)
-    token_limits = {"free": 50000, "pro": 500000, "team": 2000000}
+    # Token limits per plan (monthly) — Pro / Pro Annual = 500K
+    token_limits = {"free": 50000, "pro": 500000, "pro_annual": 500000, "team": 2000000}
     token_limit = token_limits.get(current_user.plan, 50000)
     tokens_used = getattr(current_user, 'tokens_used_this_month', 0) or 0
     tokens_used_total = getattr(current_user, 'tokens_used_total', 0) or 0

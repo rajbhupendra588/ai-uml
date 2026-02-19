@@ -5,6 +5,7 @@ import { MermaidDiagram, type DiagramTheme, DIAGRAM_THEMES } from "./MermaidDiag
 import { useTheme } from "./ThemeProvider";
 import { DiagramDownloadMenu } from "./DiagramDownloadMenu";
 import { DiagramZoomControls } from "./DiagramZoomControls";
+import { useAuth } from "@/components/AuthProvider";
 import {
   Code2,
   Sparkles,
@@ -58,10 +59,10 @@ const CODE_TEMPLATES = [
 
 export function CodeToDiagramEditor() {
   const { theme, toggleTheme } = useTheme();
+  const { user } = useAuth();
   const [code, setCode] = useState("");
   const [prompt, setPrompt] = useState("");
   const [diagramType, setDiagramType] = useState<DiagramType>("flowchart");
-  const [codeDetailLevel, setCodeDetailLevel] = useState<"small" | "complete">("complete");
   const [loading, setLoading] = useState(false);
   const [diagramCode, setDiagramCode] = useState<string | null>(null);
   const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
@@ -130,7 +131,7 @@ export function CodeToDiagramEditor() {
           prompt: fullPrompt,
           diagram_type: toValidDiagramType(diagramType),
           model: null,
-          code_detail_level: codeDetailLevel,
+          code_detail_level: "small",
         }),
       });
       const data = await response.json();
@@ -151,7 +152,7 @@ export function CodeToDiagramEditor() {
     } finally {
       setLoading(false);
     }
-  }, [code, prompt, diagramType, codeDetailLevel]);
+  }, [code, prompt, diagramType]);
 
   const handleUpdate = useCallback(async () => {
     const trimmedPrompt = (prompt || "").trim();
@@ -172,7 +173,7 @@ export function CodeToDiagramEditor() {
           prompt: fullPrompt,
           current_mermaid: diagramCode,
           model: null,
-          code_detail_level: codeDetailLevel,
+          code_detail_level: "small",
         }),
       });
       const data = await response.json();
@@ -192,7 +193,7 @@ export function CodeToDiagramEditor() {
     } finally {
       setLoading(false);
     }
-  }, [diagramCode, prompt, codeDetailLevel, selectedNodeIds, selectedNodeLabels]);
+  }, [diagramCode, prompt, selectedNodeIds, selectedNodeLabels]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -260,20 +261,6 @@ export function CodeToDiagramEditor() {
               <option key={t} value={t}>{DIAGRAM_TYPE_LABELS[t]}</option>
             ))}
           </select>
-          <div className="flex rounded-md border border-[var(--border)] overflow-hidden">
-            {(["small", "complete"] as const).map((level) => (
-              <button
-                key={level}
-                onClick={() => setCodeDetailLevel(level)}
-                className={cn(
-                  "px-2 py-1 text-xs font-medium capitalize",
-                  codeDetailLevel === level ? "bg-indigo-500 text-white" : "bg-[var(--background)] text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
-                )}
-              >
-                {level}
-              </button>
-            ))}
-          </div>
           {versions.length > 1 && (
             <select
               value={selectedVersionIndex}
@@ -364,6 +351,7 @@ export function CodeToDiagramEditor() {
                 edges={[]}
                 diagramCode={diagramCode}
                 onPrepareExport={async (fn) => await fn()}
+                userPlan={user?.plan}
               />
             </>
           )}

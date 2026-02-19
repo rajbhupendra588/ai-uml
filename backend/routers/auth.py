@@ -92,18 +92,37 @@ async def logout():
 
 # --- GitHub OAuth ---
 
-from config import GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, FRONTEND_URL
+from urllib.parse import urlencode
+
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+
+from config import GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_CALLBACK_URL
 import httpx
 
-@router.get("/github/authorize")
-async def github_authorize():
-    """Return the GitHub authorization URL."""
-    if not GITHUB_CLIENT_ID:
-        raise HTTPException(status_code=500, detail="GitHub Client ID not configured")
-    
-    # We use a state in production for security; simplified here for e2e
+
+def _github_authorize_url() -> str:
+    """Build GitHub OAuth authorize URL. Call only when GITHUB_CLIENT_ID is set."""
     scope = "read:user user:email"
-    url = f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope={scope}"
+    params = {
+        "client_id": GITHUB_CLIENT_ID,
+        "scope": scope,
+        "redirect_uri": GITHUB_CALLBACK_URL,
+    }
+    return f"https://github.com/login/oauth/authorize?{urlencode(params)}"
+
+
+@router.get("/github/authorize")
+async def github_authorize(request: Request):
+    """Return the GitHub authorization URL (JSON). If ?redirect=1, redirect browser to GitHub."""
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub login is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET.",
+        )
+    url = _github_authorize_url()
+    if request.query_params.get("redirect") == "1":
+        return RedirectResponse(url=url, status_code=302)
     return {"url": url}
 
 
@@ -111,9 +130,9 @@ async def github_authorize():
 async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     """Handle the GitHub OAuth callback."""
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
-        raise HTTPException(status_code=500, detail="GitHub credentials not configured")
+        raise HTTPException(status_code=503, detail="GitHub credentials not configured")
 
-    # 1. Exchange code for access token
+    # 1. Exchange code for access token (redirect_uri must match authorize request and GitHub OAuth App)
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             "https://github.com/login/oauth/access_token",
@@ -121,6 +140,7 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
                 "client_id": GITHUB_CLIENT_ID,
                 "client_secret": GITHUB_CLIENT_SECRET,
                 "code": code,
+                "redirect_uri": GITHUB_CALLBACK_URL,
             },
             headers={"Accept": "application/json"},
         )

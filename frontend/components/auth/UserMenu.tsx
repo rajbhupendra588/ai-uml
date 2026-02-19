@@ -3,7 +3,9 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { User, LogOut, ChevronDown, LayoutDashboard, Settings } from "lucide-react";
-import { fetchUser, clearToken, type User as AuthUser } from "@/lib/auth";
+import { fetchUser, type User as AuthUser } from "@/lib/auth";
+import { useAuth } from "@/components/AuthProvider";
+import { getPlanBadgeLabel } from "@/lib/dashboard";
 import { cn } from "@/lib/utils";
 
 interface UserMenuProps {
@@ -19,6 +21,7 @@ export function UserMenu({
   onLogout,
   className,
 }: UserMenuProps) {
+  const { logout: authLogout } = useAuth();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -41,10 +44,9 @@ export function UserMenu({
   }, []);
 
   const handleLogout = () => {
-    clearToken();
-    setUser(null);
     setOpen(false);
     onLogout?.();
+    authLogout();
   };
 
   if (loading) {
@@ -86,8 +88,18 @@ export function UserMenu({
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--primary)]/20 text-[var(--primary)]">
           <User className="h-4 w-4" />
         </div>
-        <span className="hidden sm:inline max-w-[120px] truncate">
-          {user.username || user.email}
+        <span className="hidden sm:inline flex items-center gap-2 min-w-0 max-w-[160px]">
+          <span className="truncate">{user.username || user.email}</span>
+          <span
+            className={cn(
+              "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
+              (user.plan === "free" || !user.plan)
+                ? "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+                : "bg-indigo-500/20 text-indigo-400"
+            )}
+          >
+            {getPlanBadgeLabel(user.plan)}
+          </span>
         </span>
         <ChevronDown className="h-4 w-4 text-[var(--muted)]" />
       </button>
@@ -105,8 +117,20 @@ export function UserMenu({
               <p className="truncate text-sm font-medium text-[var(--foreground)]">
                 {user.email}
               </p>
-              <p className="text-xs text-[var(--muted)]">
-                {user.diagrams_this_month} diagrams this month • {user.plan}
+              <p className="text-xs text-[var(--muted)] mt-1">
+                {user.diagrams_this_month} diagrams this month
+              </p>
+              <p className="mt-1">
+                <span
+                  className={cn(
+                    "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
+                    (user.plan === "free" || !user.plan)
+                      ? "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+                      : "bg-indigo-500/20 text-indigo-400"
+                  )}
+                >
+                  {getPlanBadgeLabel(user.plan)} plan
+                </span>
               </p>
             </div>
             <Link

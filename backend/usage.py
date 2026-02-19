@@ -1,6 +1,6 @@
 """
 Usage limits and billing checks.
-Free: 5 diagrams/month, 10K tokens/month
+Free: 10 diagrams/month, 10K tokens/month
 Pro: unlimited diagrams, 500K tokens/month
 """
 from datetime import datetime
@@ -9,11 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 from models import User
 
-# Diagram limits per month (None = unlimited)
-LIMITS = {"free": 5, "pro": None}
+# Diagram limits per month (None = unlimited). Single source of truth for enforcement and dashboard.
+LIMITS = {"free": 10, "pro": None, "pro_annual": None}
 
 # Token limits per month
-TOKEN_LIMITS = {"free": 10000, "pro": 500000}
+TOKEN_LIMITS = {"free": 10000, "pro": 500000, "pro_annual": 500000}
 
 
 def _get_limit(plan: str) -> int:
@@ -46,8 +46,6 @@ async def check_and_increment_usage(db: AsyncSession, user: User) -> None:
     await _reset_monthly_usage_if_needed(db, user)
 
     limit = _get_limit(user.plan)
-    
-    # Pro users have unlimited diagrams (limit = None)
     if limit is not None and user.diagrams_this_month >= limit:
         raise HTTPException(
             status_code=429,

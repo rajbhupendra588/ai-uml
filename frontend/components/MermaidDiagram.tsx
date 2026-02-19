@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { useTheme } from "./ThemeProvider";
+import { sanitizeMermaidCode } from "@/lib/sanitizeMermaid";
 
 /**
  * Decode HTML entities in Mermaid code before render. Entities show as literal text
@@ -423,7 +424,7 @@ export function MermaidDiagram({
       securityLevel: "loose",
     });
 
-    const cleanCode = decodeEntitiesInMermaid(code);
+    const cleanCode = decodeEntitiesInMermaid(sanitizeMermaidCode(code ?? "") || "");
     mermaid
       .render(id, cleanCode)
       .then(({ svg, bindFunctions }) => {

@@ -31,6 +31,8 @@ def _format_code_for_mermaid(code: str | None, level: str = "small") -> str:
             text = text[:497] + "..."
     text = text.replace("&", " and ").replace('"', "'")
     text = text.replace("[", "(").replace("]", ")")
+    text = text.replace("{", "(").replace("}", ")")  # { } are DIAMOND in Mermaid; break labels
+    text = re.sub(r"-{2,}", "-", text)  # --- is SUBROUTINEEND
     text = text.replace("\n", "<br/>")
     return text
 

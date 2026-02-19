@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import { AppLogo } from "@/components/AppLogo";
 import { MermaidDiagram } from "@/components/MermaidDiagram";
 import { DiagramZoomControls } from "@/components/DiagramZoomControls";
 import { getShareDiagramUrl } from "@/lib/api";
@@ -54,7 +55,7 @@ export default function SharePage() {
       >
         <p className="text-sm text-amber-500">{error}</p>
         <Link
-          href="/"
+          href="/editor"
           className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-4 py-2 text-sm text-[var(--foreground)] transition hover:bg-[var(--secondary)]"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -70,13 +71,7 @@ export default function SharePage() {
       style={{ backgroundColor: "var(--background)" }}
     >
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3">
-        <Link
-          href="/"
-          className="flex items-center gap-2 text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to ArchitectAI
-        </Link>
+        <AppLogo href="/" className="text-[var(--foreground)]" />
         <span className="text-xs text-[var(--muted)]">Shared diagram</span>
       </header>
 

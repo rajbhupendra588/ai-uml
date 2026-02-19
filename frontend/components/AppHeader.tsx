@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutGrid, HelpCircle } from "lucide-react";
+import { HelpCircle } from "lucide-react";
+import { AppLogo } from "@/components/AppLogo";
 import { useState } from "react";
 import { UserMenu } from "./auth/UserMenu";
 import { LoginModal } from "./auth/LoginModal";
@@ -24,16 +25,7 @@ export function AppHeader({ viewMode, setViewMode, onStartTour }: AppHeaderProps
     <>
       <header className="fixed top-0 left-0 right-0 z-40 h-14 border-b border-white/10 bg-slate-950/80 backdrop-blur-xl">
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6">
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-slate-100 transition hover:text-white"
-            aria-label="ArchitectAI Home"
-          >
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-400">
-              <LayoutGrid className="h-4 w-4" />
-            </div>
-            <span className="text-lg font-semibold tracking-tight">ArchitectAI</span>
-          </Link>
+          <AppLogo href="/" className="text-slate-100 hover:text-white" />
 
           <div className="flex items-center gap-1 rounded-lg bg-slate-900/50 p-1 ml-6 border border-white/5">
             <button

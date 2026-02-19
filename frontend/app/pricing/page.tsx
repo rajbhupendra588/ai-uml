@@ -393,7 +393,7 @@ export default function PricingPage() {
 
                 {/* ── Back ── */}
                 <div className="relative max-w-6xl mx-auto px-6 pt-6">
-                    <Link href="/" className="inline-flex items-center gap-2 text-sm transition-all hover:gap-3" style={{ color: "var(--muted)" }}>
+                    <Link href="/editor" className="inline-flex items-center gap-2 text-sm transition-all hover:gap-3" style={{ color: "var(--muted)" }}>
                         <ArrowLeft className="h-4 w-4" />Back to App
                     </Link>
                 </div>

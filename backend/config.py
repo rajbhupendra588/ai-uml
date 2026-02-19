@@ -53,3 +53,10 @@ USING_SUPABASE = bool(_SUPABASE_URL)
 # GitHub OAuth
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+# Callback URL GitHub redirects to after login. Must match exactly the URL in GitHub OAuth App → Authorization callback URL.
+# Default: FRONTEND_URL + /auth/callback (e.g. http://localhost:3000/auth/callback)
+_GITHUB_CALLBACK = os.getenv("GITHUB_CALLBACK_URL", "").strip()
+GITHUB_CALLBACK_URL = _GITHUB_CALLBACK if _GITHUB_CALLBACK else f"{FRONTEND_URL}/auth/callback"
+
+# Rate limits (SlowAPI format: "5/minute", "30/minute", etc.). Dev default higher to avoid 429 during testing.
+RATE_LIMIT_GENERATE = os.getenv("RATE_LIMIT_GENERATE", "30/minute" if ENVIRONMENT == "development" else "5/minute")

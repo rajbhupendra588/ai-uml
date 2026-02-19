@@ -14,7 +14,6 @@ import {
     ArrowRight,
     ArrowDown,
     Activity,
-    Code2
 } from "lucide-react";
 import { DIAGRAM_THEMES, DiagramTheme } from "./MermaidDiagram";
 
@@ -63,9 +62,6 @@ interface DiagramControlsPanelProps {
     canvasLayout: "auto" | "adaptive" | "horizontal";
     setCanvasLayout: (layout: "auto" | "adaptive" | "horizontal") => void;
     onEditCode?: () => void;
-    // Code detail (when diagram has code in nodes)
-    codeDetailLevel?: "small" | "complete";
-    setCodeDetailLevel?: (level: "small" | "complete") => void;
     diagramPlan?: Record<string, unknown> | null;
 }
 
@@ -132,27 +128,9 @@ export function DiagramControlsPanel({
     canvasLayout,
     setCanvasLayout,
     onEditCode,
-    codeDetailLevel = "small",
-    setCodeDetailLevel,
     diagramPlan = null,
 }: DiagramControlsPanelProps) {
     const isFlowchart = ["architecture", "flowchart", "graph", "state", "class"].some(t => diagramType.includes(t) || diagramType === "chat");
-
-    const hasCodeInPlan = (p: Record<string, unknown> | null): boolean => {
-        if (!p) return false;
-        const check = (obj: unknown): boolean => {
-            if (typeof obj === "object" && obj !== null) {
-                const o = obj as Record<string, unknown>;
-                if ("code" in o && o.code) return true;
-                if ("snippet" in o && o.snippet) return true;
-                if (Array.isArray(obj)) return obj.some(check);
-                return Object.values(obj).some(check);
-            }
-            return false;
-        };
-        return check(p);
-    };
-    const showCodeDetail = hasCodeInPlan(diagramPlan) && setCodeDetailLevel;
 
     return (
         <>
@@ -172,28 +150,6 @@ export function DiagramControlsPanel({
             >
                 <div className="p-4 pt-14 pb-8">
                     <h3 className="text-sm font-bold text-[var(--foreground)] mb-4 px-1">Diagram Controls</h3>
-
-                    {showCodeDetail && (
-                        <CollapsibleSection title="Code Detail" icon={Code2} defaultOpen={false}>
-                            <p className="text-[10px] text-[var(--muted-foreground)] mb-2">Show code in nodes</p>
-                            <div className="flex rounded-md border border-[var(--border)] overflow-hidden">
-                                {(["small", "complete"] as const).map((level) => (
-                                    <button
-                                        key={level}
-                                        onClick={() => setCodeDetailLevel!(level)}
-                                        className={cn(
-                                            "flex-1 py-1.5 text-xs font-medium transition-colors capitalize",
-                                            codeDetailLevel === level
-                                                ? "bg-[var(--primary)] text-white"
-                                                : "bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)]"
-                                        )}
-                                    >
-                                        {level}
-                                    </button>
-                                ))}
-                            </div>
-                        </CollapsibleSection>
-                    )}
 
                     {diagramVersions.length > 1 && (
                         <CollapsibleSection title="Versions" defaultOpen={true}>

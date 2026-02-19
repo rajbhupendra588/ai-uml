@@ -26,6 +26,7 @@ import {
     Loader2,
     Coins,
 } from "lucide-react";
+import { AppLogo } from "@/components/AppLogo";
 import { cn } from "@/lib/utils";
 import {
     fetchDashboardOverview,
@@ -106,7 +107,7 @@ function DashboardContent() {
                 <AlertCircle className="h-12 w-12 text-red-400" />
                 <p className="text-lg">{error || "Failed to load dashboard"}</p>
                 <Link
-                    href="/"
+                    href="/editor"
                     className="flex items-center gap-2 text-[var(--primary)] hover:opacity-80"
                 >
                     <ArrowLeft className="h-4 w-4" />
@@ -128,13 +129,8 @@ function DashboardContent() {
             {/* Sidebar */}
             <aside className="flex w-[240px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--card)] overflow-hidden">
                 {/* Logo */}
-                <div className="flex h-14 items-center gap-2.5 border-b border-[var(--border)] px-4 shrink-0">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)]/20">
-                        <Zap className="h-4 w-4 text-[var(--primary)]" />
-                    </div>
-                    <span className="text-base font-semibold text-[var(--foreground)]">
-                        ArchitectAI
-                    </span>
+                <div className="flex h-14 items-center border-b border-[var(--border)] px-4 shrink-0">
+                    <AppLogo href="/" />
                 </div>
 
                 {/* User Info */}
@@ -191,7 +187,7 @@ function DashboardContent() {
                 {/* Bottom Actions */}
                 <div className="border-t border-[var(--border)] p-3 space-y-1 shrink-0">
                     <Link
-                        href="/"
+                        href="/editor"
                         className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition-all"
                     >
                         <ArrowLeft className="h-4 w-4" />
@@ -244,12 +240,13 @@ function formatNumber(num: number): string {
 // --- Overview Tab ---
 function OverviewTab({ data }: { data: DashboardOverview }) {
     const { stats, user, recent_diagrams } = data;
+    const isProOrAnnual = user.plan === "pro" || user.plan === "pro_annual";
 
     const statCards = [
         {
             label: "Diagrams This Month",
             value: stats.diagrams_this_month,
-            subtext: `of ${stats.plan_limit} limit`,
+            subtext: isProOrAnnual ? "Unlimited" : `of ${stats.plan_limit} limit`,
             icon: <Calendar className="h-5 w-5" />,
             color: "primary",
         },
@@ -331,7 +328,7 @@ function OverviewTab({ data }: { data: DashboardOverview }) {
                             Monthly Diagram Usage
                         </h3>
                         <span className="text-xs text-[var(--muted)]">
-                            {stats.diagrams_this_month} / {stats.plan_limit}
+                            {stats.diagrams_this_month} / {isProOrAnnual ? "Unlimited" : stats.plan_limit}
                         </span>
                     </div>
                     <div className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--secondary)]">
@@ -461,7 +458,7 @@ function DiagramsTab({
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-bold text-[var(--foreground)]">My Diagrams</h1>
                 <Link
-                    href="/"
+                    href="/editor"
                     className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-colors"
                 >
                     <Zap className="h-4 w-4" />
@@ -479,7 +476,7 @@ function DiagramsTab({
                         Create your first diagram to see it here
                     </p>
                     <Link
-                        href="/"
+                        href="/editor"
                         className="mt-6 flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-colors"
                     >
                         Get Started
@@ -753,7 +750,7 @@ function BillingTab({
                         <p className="mt-1 text-2xl font-bold text-[var(--foreground)]">
                             {stats.diagrams_this_month}{" "}
                             <span className="text-base text-[var(--muted)]">
-                                / {stats.plan_limit}
+                                / {(user.plan === "pro" || user.plan === "pro_annual") ? "Unlimited" : stats.plan_limit}
                             </span>
                         </p>
                     </div>

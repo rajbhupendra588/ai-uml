@@ -10,10 +10,14 @@ from config import DATABASE_URL, ENVIRONMENT
 
 connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 
+# For Postgres/Supabase: avoid using connections closed by server or client disconnect.
+# pre_ping: test connection before use; recycle: replace connections before server idle timeout.
 engine = create_async_engine(
     DATABASE_URL,
     echo=(ENVIRONMENT == "development"),
     connect_args=connect_args,
+    pool_pre_ping=True,
+    pool_recycle=300 if "sqlite" not in DATABASE_URL else -1,  # 5 min for Postgres; SQLite no recycle
 )
 
 AsyncSessionLocal = async_sessionmaker(

@@ -18,6 +18,11 @@ import { getShareUrl } from "@/lib/api";
 import type { Node, Edge } from "@xyflow/react";
 import { addWatermarkToImage, shouldAddWatermark } from "@/lib/watermark";
 
+/** Free plan users can only download as PNG. */
+function isFreePlan(userPlan?: string): boolean {
+  return shouldAddWatermark(userPlan);
+}
+
 const IMAGE_SCALE = 2;
 const IMAGE_QUALITY = 1;
 const PDF_IMAGE_SCALE = 2;
@@ -65,6 +70,8 @@ export function DiagramDownloadMenu({
   const isControlled = controlledOpen !== undefined && controlledSetOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
   const setOpen = isControlled ? controlledSetOpen : setInternalOpen;
+
+  const freePlan = isFreePlan(userPlan);
 
   const runExport = useCallback(
     async (exportFn: () => Promise<void>) => {
@@ -142,9 +149,8 @@ export function DiagramDownloadMenu({
       const res = await fetch(dataUrl);
       let blob = await res.blob();
 
-      // Add watermark for free tier users by converting to PNG with watermark
+      // Free plan: only PNG is allowed; we don't reach here when freePlan (SVG item hidden).
       if (shouldAddWatermark(userPlan)) {
-        // Use toPng directly to avoid canvas tainting issues
         const pngDataUrl = await toPng(el, {
           cacheBust: true,
           pixelRatio: IMAGE_SCALE,
@@ -161,11 +167,11 @@ export function DiagramDownloadMenu({
         const pngBlob = await res.blob();
         blob = await addWatermarkToImage(pngBlob);
         toast.success("Diagram downloaded as PNG (with watermark)");
+        downloadBlob(blob, getDownloadFilename("png", diagramType));
       } else {
         toast.success("Diagram downloaded as SVG");
+        downloadBlob(blob, getDownloadFilename("svg", diagramType));
       }
-
-      downloadBlob(blob, getDownloadFilename("svg", diagramType));
     });
   }, [containerRef, diagramType, runExport, userPlan]);
 
@@ -322,22 +328,26 @@ export function DiagramDownloadMenu({
               <FileImage className="size-4 shrink-0 text-slate-400" />
               PNG image
             </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onSelect={handleDownloadSvg}
-              disabled={busy}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-            >
-              <ImageIcon className="size-4 shrink-0 text-slate-400" />
-              SVG image
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onSelect={handleDownloadPdf}
-              disabled={busy}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-            >
-              <FileType className="size-4 shrink-0 text-slate-400" />
-              PDF document
-            </DropdownMenu.Item>
+            {!freePlan && (
+              <>
+                <DropdownMenu.Item
+                  onSelect={handleDownloadSvg}
+                  disabled={busy}
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                >
+                  <ImageIcon className="size-4 shrink-0 text-slate-400" />
+                  SVG image
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={handleDownloadPdf}
+                  disabled={busy}
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-200 outline-none hover:bg-slate-700/80 hover:text-slate-100 focus:bg-slate-700/80 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                >
+                  <FileType className="size-4 shrink-0 text-slate-400" />
+                  PDF document
+                </DropdownMenu.Item>
+              </>
+            )}
             <DropdownMenu.Separator className="my-1 h-px bg-slate-600/80" />
             {diagramCode && (
               <DropdownMenu.Item
