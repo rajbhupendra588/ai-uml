@@ -76,17 +76,30 @@ async def create_subscription(
 
     # ── Get or create Razorpay customer ──
     if not current_user.razorpay_customer_id:
-        try:
-            customer = RazorpayService.create_customer(
-                email=current_user.email,
-                name=current_user.username or current_user.email.split("@")[0],
-            )
-            current_user.razorpay_customer_id = customer["id"]
-            db.add(current_user)
-            await db.commit()
-        except Exception as e:
-            logger.error(f"subscription_create: failed to create customer: {e}")
-            raise HTTPException(status_code=503, detail="Could not set up payment profile. Please try again.")
+        import time
+        last_err = None
+        for attempt in range(3):
+            try:
+                customer = RazorpayService.create_customer(
+                    email=current_user.email,
+                    name=current_user.username or current_user.email.split("@")[0],
+                )
+                current_user.razorpay_customer_id = customer["id"]
+                db.add(current_user)
+                await db.commit()
+                last_err = None
+                break
+            except (ConnectionError, OSError) as e:
+                last_err = e
+                logger.warning(f"subscription_create: customer creation attempt {attempt+1} failed (connection): {e}")
+                if attempt < 2:
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"subscription_create: failed to create customer: {e}")
+                raise HTTPException(status_code=503, detail="Could not set up payment profile. Please try again.")
+        if last_err:
+            logger.error(f"subscription_create: customer creation failed after 3 attempts: {last_err}")
+            raise HTTPException(status_code=503, detail="Could not reach payment provider. Please try again in a moment.")
 
     # ── Resolve plan ──
     plan_id = RAZORPAY_PLANS.get(request.plan_type)
