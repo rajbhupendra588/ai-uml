@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/components/AuthProvider";
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/next";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
