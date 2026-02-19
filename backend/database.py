@@ -11,11 +11,21 @@ from config import DATABASE_URL, ENVIRONMENT
 connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 
 # For Postgres/Supabase: avoid using connections closed by server or client disconnect.
+import ssl
 # pre_ping: test connection before use; recycle: replace connections before server idle timeout.
+def _create_ssl_context():
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=(ENVIRONMENT == "development"),
-    connect_args={"ssl": True} if "sqlite" not in DATABASE_URL else connect_args,
+    # ssl=True verifies certs by default. For some poolers (Supabase Transaction Mode),
+    # self-signed certs in the chain might fail verification.
+    # We disable verification if needed for connectivity.
+    connect_args={"ssl": _create_ssl_context()} if "sqlite" not in DATABASE_URL else connect_args,
     pool_pre_ping=True,
     pool_recycle=300 if "sqlite" not in DATABASE_URL else -1,
     pool_size=10,
