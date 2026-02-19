@@ -68,10 +68,12 @@ Use your real Vercel and Render URLs if different.
 | Setting        | Value |
 |----------------|--------|
 | **Runtime**    | Python 3 |
-| **Build Command** | `pip install -r requirements.txt` |
-| **Start Command** | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| **Build Command** | `pip install --upgrade pip setuptools && pip install -r requirements.txt` |
+| **Start Command** | `python -m uvicorn main:app --host 0.0.0.0 --port $PORT` |
 
 Render sets `PORT` automatically; the app already uses it.
+
+**Note:** The build command upgrades `setuptools` (needed by Razorpay for `pkg_resources` on Python 3.12+). The start command uses `python -m uvicorn` so the same environment that received `pip install` is used at runtime, avoiding `ModuleNotFoundError: No module named 'pkg_resources'`.
 
 ### 2.3 Backend environment variables (Render Dashboard → Environment)
 
