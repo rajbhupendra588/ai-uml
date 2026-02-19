@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -8,7 +8,7 @@ import { login, getGithubLoginUrl, setToken } from "@/lib/auth";
 import { Loader2, ArrowLeft, Github } from "lucide-react";
 import { toast } from "sonner";
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect") || "/";
@@ -164,5 +164,23 @@ export default function LoginPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main
+          className="min-h-screen flex flex-col items-center justify-center"
+          style={{ backgroundColor: "var(--background)", color: "var(--foreground)" }}
+        >
+          <SiteHeader />
+          <Loader2 className="h-8 w-8 animate-spin" style={{ color: "var(--primary)" }} />
+        </main>
+      }
+    >
+      <LoginContent />
+    </Suspense>
   );
 }
