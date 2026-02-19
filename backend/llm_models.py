@@ -5,7 +5,6 @@ Available OpenRouter models for user selection.
 AVAILABLE_MODELS = [
     # Default / Existing
     {"id": "arcee-ai/trinity-large-preview:free", "name": "Trinity (default)"},
-    {"id": "tngtech/deepseek-r1t-chimera:free", "name": "DeepSeek R1 Chimera"},
     
     # User requested additions (sorted roughly by provider/family or just added)
     {"id": "openai/gpt-oss-120b:free", "name": "GPT-OSS 120B"},
