@@ -15,9 +15,11 @@ connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 engine = create_async_engine(
     DATABASE_URL,
     echo=(ENVIRONMENT == "development"),
-    connect_args=connect_args,
+    connect_args={"ssl": True} if "sqlite" not in DATABASE_URL else connect_args,
     pool_pre_ping=True,
-    pool_recycle=300 if "sqlite" not in DATABASE_URL else -1,  # 5 min for Postgres; SQLite no recycle
+    pool_recycle=300 if "sqlite" not in DATABASE_URL else -1,
+    pool_size=10,
+    max_overflow=20,
 )
 
 AsyncSessionLocal = async_sessionmaker(
