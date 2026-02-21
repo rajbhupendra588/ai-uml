@@ -18,6 +18,16 @@ export interface VerifyPaymentResponse {
 
 export type PlanType = "pro_monthly" | "pro_annual";
 
+export interface PaymentTransaction {
+    id: number;
+    razorpay_payment_id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    method: string | null;
+    created_at: string;
+}
+
 // ── Razorpay Script Loader ───────────────────────────────────────────
 
 export const RAZORPAY_SCRIPT_URL = "https://checkout.razorpay.com/v1/checkout.js";
@@ -107,9 +117,6 @@ export async function cancelSubscription(): Promise<void> {
     }
 }
 
-/**
- * Get subscription status for current user.
- */
 export async function getSubscriptionStatus(): Promise<any> {
     const headers = getAuthHeaders();
     if (!headers.Authorization) {
@@ -121,6 +128,25 @@ export async function getSubscriptionStatus(): Promise<any> {
 
     if (!res.ok) {
         throw new Error("Failed to fetch subscription status.");
+    }
+
+    return res.json();
+}
+
+/**
+ * Get payment history for the current user.
+ */
+export async function getPayments(): Promise<PaymentTransaction[]> {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) {
+        throw new Error("Not authenticated");
+    }
+    const res = await fetch(`${API_BASE_URL}/api/v1/subscription/payments`, {
+        headers,
+    });
+
+    if (!res.ok) {
+        throw new Error("Failed to fetch payment history.");
     }
 
     return res.json();

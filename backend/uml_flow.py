@@ -48,26 +48,32 @@ Return ONLY valid JSON with this exact structure:
     { "from": "ClassNameA", "to": "ClassNameB", "type": "extends" | "implements" | "associates" | "uses", "label": "optional short label" }
   ]
 }
-Rules: Keep 3-8 classes. "from" and "to" MUST be exact class names from the classes list. Keep names and labels SHORT. Use standard UML relationship types only.
+Rules (strict): 
+- Identify all necessary core classes (4-15 classes).
+- "from" and "to" MUST be exact class names from the classes list. 
+- Ensure class models are comprehensive and professional, capturing a realistic architectural domain model with proper attributes and methods.
+- Use standard UML relationship types only (extends, implements, associates, uses).
 Optional: Add "code" to a class when the user asks for implementation or code snippets."""
 
 # --- Sequence diagram ---
-SEQUENCE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a SEQUENCE DIAGRAM (time-ordered interactions).
+SEQUENCE_SYSTEM_PROMPT = """You are an expert software architect. From the user's description, design a highly detailed, professional-grade SEQUENCE DIAGRAM (time-ordered interactions).
 
 Return ONLY valid JSON with this exact structure:
 {
-  "participants": [ { "id": "U", "name": "User" }, { "id": "A", "name": "API" } ],
+  "participants": [ { "id": "U", "name": "Customer" }, { "id": "W", "name": "Website" }, { "id": "P", "name": "Payment Gateway" }, { "id": "WH", "name": "Warehouse" } ],
   "messages": [
-    { "from": "U", "to": "A", "label": "short verb phrase", "order": 1 },
-    { "from": "A", "to": "U", "label": "short response", "order": 2 }
+    { "from": "U", "to": "W", "label": "Browse products", "order": 1 },
+    { "from": "W", "to": "W", "label": "Validate cart", "order": 2 },
+    { "from": "W", "to": "P", "label": "Process payment", "order": 3 }
   ]
 }
 Rules (strict):
-- NUMBERING is mandatory: every message MUST have "order": 1, 2, 3, ... in strict time order. Step 1 = first, 2 = second, etc. No gaps, no duplicates.
-- Messages MUST be listed in chronological order (order 1, then 2, then 3...). Vertical position in the diagram = time.
-- Use 2-6 participants. Use short ids (e.g. U, A, G, K) in from/to. from and to must be participant ids.
-- Keep each message label SHORT (2-5 words). To the point only.
-- Flow: request → process → response. Include return messages where relevant."""
+- NUMBERING is mandatory: every message MUST have "order": 1, 2, 3, ... in strict time order. No gaps, no duplicates.
+- Messages MUST be listed in chronological order. Vertical position in the diagram = time.
+- Identify all realistic participants (3-10 systems, DBs, actors). Use short alphanumeric ids (e.g. U, W, P) in from/to.
+- COMPREHENSIVENESS: Do NOT oversimplify. Break down the process into detailed, granular logical steps (e.g., 10-30 messages). Include edge cases, internal validations (self-messages), background processing, external calls, and comprehensive response sequences.
+- Keep each message label concise but highly descriptive (2-6 words).
+- Flow: Produce a premium, production-ready architectural design that covers the end-to-end lifecycle."""
 
 # --- Use case diagram ---
 USECASE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a COMPLETE USE CASE DIAGRAM.
@@ -96,7 +102,7 @@ Rules:
 IMPORTANT: Count the actors and use cases in the user's message. Your JSON must contain at least that many. Outputting only 2-3 use cases when the user listed 20+ is wrong. Prefer a complete diagram over a short one."""
 
 # --- Activity diagram ---
-ACTIVITY_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract an ACTIVITY DIAGRAM.
+ACTIVITY_SYSTEM_PROMPT = """You are an expert software architect. From the user's description, extract a highly detailed, professional-grade ACTIVITY DIAGRAM.
 Return ONLY valid JSON with this exact structure:
 {
   "nodes": [
@@ -104,11 +110,11 @@ Return ONLY valid JSON with this exact structure:
   ],
   "edges": [ { "from": "n1", "to": "n2", "label": "short", "order": 1 } ]
 }
-Rules: Exactly one start and one end. "from" and "to" MUST be node ids. Edges MUST have "order": 1, 2, 3... in flow order. Keep all labels SHORT (2-5 words). Use 4-12 nodes.
+Rules: Exactly one start and one end. "from" and "to" MUST be node ids. Edges MUST have "order": 1, 2, 3... in flow order. Keep labels descriptive. COMPREHENSIVENESS: Use 10-25 nodes to ensure the flow is robust and not oversimplified.
 Optional: Add "code" to a node when the user asks for code or implementation details."""
 
 # --- Flowchart diagram ---
-FLOWCHART_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a FLOWCHART.
+FLOWCHART_SYSTEM_PROMPT = """You are an expert software architect. From the user's description, extract a highly detailed, professional-grade FLOWCHART.
 Return ONLY valid JSON with this exact structure:
 {
   "nodes": [
@@ -120,30 +126,32 @@ Rules:
 - "type": "start" (rounded), "process" (box), "decision" (diamond), "end" (rounded).
 - "from" and "to" MUST be node ids.
 - Edges MUST have "order": 1, 2, 3... in flow order.
-- Keep labels SHORT. Optional: Add "code" to a node when the user asks for code snippets."""
+- COMPREHENSIVENESS: Provide a thorough breakdown using 10-30 nodes. Do not oversimplify.
+- Keep labels descriptive. Optional: Add "code" to a node when the user asks for code snippets."""
 
 # --- State diagram ---
-STATE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a STATE DIAGRAM.
+STATE_SYSTEM_PROMPT = """You are an expert software architect. From the user's description, extract a comprehensive, professional-grade STATE DIAGRAM.
 Return ONLY valid JSON with this exact structure:
 {
   "states": [ { "id": "s1", "name": "State Name", "isInitial": false, "isFinal": false, "code": "optional 2-10 line snippet if user asks for code" } ],
   "transitions": [ { "from": "s1", "to": "s2", "label": "event / action", "order": 1 } ]
 }
-Rules: Exactly one state with isInitial: true. Optionally one isFinal: true. "from" and "to" MUST be state ids. Transitions MUST have "order": 1, 2, 3... for display. Keep labels SHORT.
+Rules: Exactly one state with isInitial: true. Optionally one isFinal: true. "from" and "to" MUST be state ids. Transitions MUST have "order": 1, 2, 3... for display. 
+COMPREHENSIVENESS: Use 5-20 states for detailed life-cycle management. Keep labels clear and concise.
 Optional: Add "code" to a state when the user asks for code or implementation details."""
 
 # --- Component diagram ---
-COMPONENT_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a COMPONENT DIAGRAM.
+COMPONENT_SYSTEM_PROMPT = """You are an expert software architect. From the user's description, extract a highly detailed, professional-grade COMPONENT DIAGRAM.
 Return ONLY valid JSON with this exact structure:
 {
   "components": [ { "id": "c1", "name": "Component Name", "code": "optional 2-10 line snippet if user asks for code" } ],
   "dependencies": [ { "from": "c1", "to": "c2", "label": "optional short label", "order": 1 } ]
 }
-Rules: 3-8 components. "from" and "to" MUST be component ids. Add "order": 1, 2, 3... to dependencies for display. Keep names and labels SHORT.
+Rules: 5-15 components, breaking down the system into detailed architectural microservices, modules, or layers. "from" and "to" MUST be component ids. Add "order": 1, 2, 3... to dependencies for display. Keep names and labels professional and descriptive.
 Optional: Add "code" to a component when the user asks for code or implementation details."""
 
 # --- Deployment diagram ---
-DEPLOYMENT_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a SIMPLE deployment diagram that is easy to understand.
+DEPLOYMENT_SYSTEM_PROMPT = """You are an expert software architect. From the user's description, extract a comprehensive, professional-grade deployment diagram.
 
 Return ONLY valid JSON with this exact structure:
 {
@@ -160,13 +168,13 @@ Return ONLY valid JSON with this exact structure:
 }
 Rules (strict):
 - NUMBERING: connections MUST have "order": 1, 2, 3... in the order things happen. No gaps.
-- Use at most 5 nodes and 2 artifacts. Fewer is better.
-- Keep names and labels SHORT (2-4 words). To the point only.
+- Map all necessary infrastructure (load balancers, web servers, databases, cache instances, cdns). Use 5-15 nodes and robust artifacts to detail a premium architecture.
+- Keep names and labels concise but highly descriptive.
 - Every connection needs a label and order. "from" and "to" must be node ids."""
 
 
 # --- Mindtree diagram ---
-MINDTREE_SYSTEM_PROMPT = """You are a software architect. From the user's description, extract a MIND MAP (Mindtree).
+MINDTREE_SYSTEM_PROMPT = """You are an expert software architect. From the user's description, extract a comprehensive, professional-grade MIND MAP (Mindtree).
 Return ONLY valid JSON with this exact structure:
 {
   "rootId": "root",
@@ -179,8 +187,8 @@ Rules:
 - "rootId" must match one node's "id". That node has "parentId": "".
 - All other nodes must have a valid "parentId".
 - "id" must be alphanumeric (keep it short).
-- "label" should be short (1-5 words).
-- Create a balanced tree with 2-4 levels depth."""
+- "label" should be highly descriptive (1-6 words).
+- COMPREHENSIVENESS: Create a detailed, balanced tree with 3-5 levels depth and spanning 15-40 nodes to capture rich architectural content."""
 
 
 def _extract_json(text: str) -> str:

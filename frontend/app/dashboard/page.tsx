@@ -37,7 +37,7 @@ import {
     PLAN_INFO,
     type DashboardOverview,
 } from "@/lib/dashboard";
-import { type PlanType } from "@/lib/subscription";
+import { type PlanType, getPayments, type PaymentTransaction, getSubscriptionStatus, cancelSubscription } from "@/lib/subscription";
 import { clearToken, getToken, getAuthHeaders } from "@/lib/auth";
 import { getDiagramUrl } from "@/lib/api";
 import { toast } from "sonner";
@@ -764,8 +764,24 @@ function BillingTab({
     onUpdate?: (d: DashboardOverview) => void;
 }) {
     const [upgradingPlan, setUpgradingPlan] = useState<string | null>(null);
+    const [payments, setPayments] = useState<PaymentTransaction[]>([]);
+    const [loadingPayments, setLoadingPayments] = useState(true);
+    const [subscriptionStatus, setSubscriptionStatus] = useState<any>(null);
+    const [cancelling, setCancelling] = useState(false);
+
     const currentPlan = PLAN_INFO[user.plan] || PLAN_INFO.free;
     const plans = Object.entries(PLAN_INFO);
+
+    useEffect(() => {
+        getPayments()
+            .then(setPayments)
+            .catch(console.error)
+            .finally(() => setLoadingPayments(false));
+
+        getSubscriptionStatus()
+            .then(setSubscriptionStatus)
+            .catch(console.error);
+    }, []);
 
     const handleUpgrade = async (planKey: string) => {
         if (planKey === "free") return;
@@ -804,6 +820,48 @@ function BillingTab({
                         </p>
                     </div>
                 </div>
+
+                {/* Cancel Subscription section */}
+                {subscriptionStatus?.has_subscription && user.plan !== "free" && (
+                    <div className="mt-6 pt-6 border-t border-[var(--primary)]/20 flex flex-col items-start gap-3">
+                        {subscriptionStatus.cancel_at_period_end ? (
+                            <div className="bg-amber-500/10 text-amber-500 text-sm px-4 py-3 rounded-lg flex items-start gap-3 border border-amber-500/20 w-full">
+                                <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                                <div>
+                                    <p className="font-medium">Cancellation Scheduled</p>
+                                    <p className="opacity-90 mt-0.5">Your subscription will be cancelled at the end of the current billing period.</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                <button
+                                    onClick={async () => {
+                                        if (!confirm("Are you sure you want to cancel your subscription? You'll keep Pro features until the end of your billing period.")) return;
+                                        setCancelling(true);
+                                        try {
+                                            await cancelSubscription();
+                                            const updatedSub = await getSubscriptionStatus();
+                                            setSubscriptionStatus(updatedSub);
+                                            toast.success("Subscription scheduled for cancellation.");
+                                        } catch (err) {
+                                            toast.error(err instanceof Error ? err.message : "Failed to cancel subscription");
+                                        } finally {
+                                            setCancelling(false);
+                                        }
+                                    }}
+                                    disabled={cancelling}
+                                    className="rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-500/20 disabled:opacity-50 transition-colors flex items-center gap-2"
+                                >
+                                    {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                    Cancel Subscription
+                                </button>
+                                <p className="text-xs text-[var(--muted)]">
+                                    You can cancel anytime. You will keep your Pro features until the end of your billing period.
+                                </p>
+                            </>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Plan Comparison */}
@@ -877,9 +935,55 @@ function BillingTab({
                 <h3 className="text-base font-semibold text-[var(--foreground)] mb-4">
                     Billing History
                 </h3>
-                <div className="flex items-center justify-center py-6 text-[var(--muted)]">
-                    <p className="text-sm">No billing history yet</p>
-                </div>
+                {loadingPayments ? (
+                    <div className="flex items-center justify-center py-6 text-[var(--muted)]">
+                        <Loader2 className="h-6 w-6 animate-spin" />
+                    </div>
+                ) : payments.length === 0 ? (
+                    <div className="flex items-center justify-center py-6 text-[var(--muted)]">
+                        <p className="text-sm">No billing history yet</p>
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto rounded-md border border-[var(--border)]">
+                        <table className="w-full text-sm text-left border-collapse">
+                            <thead className="bg-[var(--secondary)] border-b border-[var(--border)]">
+                                <tr>
+                                    <th className="px-4 py-3 font-medium text-[var(--muted)]">Date</th>
+                                    <th className="px-4 py-3 font-medium text-[var(--muted)]">Amount</th>
+                                    <th className="px-4 py-3 font-medium text-[var(--muted)]">Status</th>
+                                    <th className="px-4 py-3 font-medium text-[var(--muted)]">Method</th>
+                                    <th className="px-4 py-3 font-medium text-[var(--muted)]">Transaction ID</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--border)]">
+                                {payments.map(p => (
+                                    <tr key={p.id} className="hover:bg-[var(--secondary)]/50 transition-colors">
+                                        <td className="px-4 py-3 whitespace-nowrap text-[var(--foreground)]">
+                                            {new Date(p.created_at).toLocaleDateString()}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-[var(--foreground)]">
+                                            {p.amount} {p.currency}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap">
+                                            <span className={cn(
+                                                "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
+                                                p.status === "captured" ? "bg-emerald-500/20 text-emerald-500" : "bg-red-500/20 text-red-500"
+                                            )}>
+                                                {p.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-[var(--foreground)] capitalize">
+                                            {p.method || "-"}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-[var(--muted)]">
+                                            {p.razorpay_payment_id}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </div>
         </div>
     );

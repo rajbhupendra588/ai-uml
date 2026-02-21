@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, CreditCard, Calendar, AlertCircle } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { getSubscriptionStatus, cancelSubscription } from "@/lib/subscription";
+import { getSubscriptionStatus, cancelSubscription, getPayments, PaymentTransaction } from "@/lib/subscription";
 
 interface SubscriptionStatus {
     has_subscription: boolean;
@@ -23,6 +23,7 @@ interface SubscriptionStatus {
 export default function BillingPage() {
     const { user, loading: authLoading } = useAuth();
     const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
+    const [payments, setPayments] = useState<PaymentTransaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +43,8 @@ export default function BillingPage() {
             setLoading(true);
             const data = await getSubscriptionStatus();
             setSubscription(data);
+            const history = await getPayments();
+            setPayments(history);
         } catch (err) {
             setError(err instanceof Error ? err.message : "An error occurred");
         } finally {
@@ -129,10 +132,15 @@ export default function BillingPage() {
                                 </Alert>
                             )}
 
-                            <div className="pt-4">
+                            <div className="pt-4 flex flex-col items-start gap-2">
                                 <Button variant="destructive" onClick={handleCancelSubscription} disabled={subscription.cancel_at_period_end}>
                                     {subscription.cancel_at_period_end ? "Cancellation Scheduled" : "Cancel Subscription"}
                                 </Button>
+                                {!subscription.cancel_at_period_end && (
+                                    <p className="text-xs text-muted-foreground">
+                                        You can cancel anytime. You will keep your Pro features until the end of your billing period.
+                                    </p>
+                                )}
                             </div>
                         </div>
                     ) : (
@@ -192,6 +200,54 @@ export default function BillingPage() {
                                 />
                             </div>
                         </div>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Transaction History */}
+            <Card className="mt-8">
+                <CardHeader>
+                    <CardTitle>Billing History</CardTitle>
+                    <CardDescription>Recent transactions and invoices</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="space-y-4">
+                        {payments.length === 0 ? (
+                            <p className="text-muted-foreground text-sm">No billing history available.</p>
+                        ) : (
+                            <div className="overflow-x-auto rounded-md border">
+                                <table className="w-full text-sm border-collapse">
+                                    <thead className="bg-muted/50 border-b">
+                                        <tr>
+                                            <th className="px-4 py-3 text-left font-medium">Date</th>
+                                            <th className="px-4 py-3 text-left font-medium">Amount</th>
+                                            <th className="px-4 py-3 text-left font-medium">Status</th>
+                                            <th className="px-4 py-3 text-left font-medium">Method</th>
+                                            <th className="px-4 py-3 text-left font-medium">Transaction ID</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {payments.map(payment => (
+                                            <tr key={payment.id} className="hover:bg-muted/50">
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    {new Date(payment.created_at).toLocaleDateString()}
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    {payment.amount} {payment.currency}
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <Badge variant={payment.status === 'captured' ? 'default' : 'secondary'} className="capitalize">
+                                                        {payment.status}
+                                                    </Badge>
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap capitalize">{payment.method || '-'}</td>
+                                                <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">{payment.razorpay_payment_id}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
                 </CardContent>
             </Card>

@@ -521,7 +521,6 @@ function CanvasInner({ onEditCode, initialDiagram }: CanvasProps) {
     setDiagramPlan(null);
     setExplanation(null);
     setModelResponse(null);
-    setModelThinking(null);
     setNewDiagramCount((c) => c + 1); // Clears GitHub repos panel cache
     setSavedDiagramId(null);
     setSavedDiagramTitle(null);

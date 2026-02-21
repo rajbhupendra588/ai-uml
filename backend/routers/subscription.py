@@ -46,6 +46,16 @@ class CancelSubscriptionRequest(BaseModel):
     cancel_at_period_end: bool = True
 
 
+class PaymentResponse(BaseModel):
+    id: int
+    razorpay_payment_id: str
+    amount: float
+    currency: str
+    status: str
+    method: Optional[str] = None
+    created_at: datetime
+
+
 # ── POST /create ──────────────────────────────────────────────────────
 
 @router.post("/create", response_model=SubscriptionResponse)
@@ -109,7 +119,8 @@ async def create_subscription(
             detail=f"Invalid plan type: {request.plan_type}. Use pro_monthly or pro_annual.",
         )
 
-    total_count = 12 if "annual" in request.plan_type else 1
+    # Set duration. For an apparently infinite monthly plan, Razorpay recommends setting a high count.
+    total_count = 12 if "annual" in request.plan_type else 120
 
     # ── Create subscription on Razorpay (with retry on stale customer) ──
     razorpay_sub = await _create_razorpay_subscription(
@@ -376,7 +387,36 @@ async def get_subscription_status(
     }
 
 
+# ── GET /payments ─────────────────────────────────────────────────────
+
+@router.get("/payments", response_model=list[PaymentResponse])
+async def get_payments(
+    current_user: User = Depends(get_current_user_required),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all payment transactions for the current user."""
+    result = await db.execute(
+        select(Payment)
+        .where(Payment.user_id == current_user.id)
+        .order_by(Payment.created_at.desc())
+    )
+    payments = result.scalars().all()
+    
+    return [
+        PaymentResponse(
+            id=p.id,
+            razorpay_payment_id=p.razorpay_payment_id,
+            amount=p.amount_in_currency,
+            currency=p.currency,
+            status=p.status,
+            method=p.method,
+            created_at=p.created_at
+        ) for p in payments
+    ]
+
+
 # ── POST /cancel ──────────────────────────────────────────────────────
+
 
 @router.post("/cancel")
 async def cancel_subscription(
@@ -402,8 +442,13 @@ async def cancel_subscription(
             cancel_at_cycle_end=request.cancel_at_period_end,
         )
     except Exception as e:
-        logger.error(f"subscription_cancel: Razorpay error: {e}")
-        raise HTTPException(status_code=503, detail="Could not cancel subscription. Please try again.")
+        error_msg = str(e).lower()
+        if "not cancellable" in error_msg or "already cancelled" in error_msg:
+            logger.info(f"subscription_cancel: Subscription already cancelled or completed on Razorpay: {e}")
+            # we can safely proceed to update our database
+        else:
+            logger.error(f"subscription_cancel: Razorpay error: {e}")
+            raise HTTPException(status_code=400, detail=f"Could not cancel subscription. Provider error: {e}")
 
     subscription.cancel_at_period_end = request.cancel_at_period_end
     if not request.cancel_at_period_end:
