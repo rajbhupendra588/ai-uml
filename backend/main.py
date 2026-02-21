@@ -267,7 +267,7 @@ async def generate_diagram(
             body.diagram_type, body.model or "default", len(body.prompt),
         )
         start = time.perf_counter()
-        result = run_agent(body.prompt, body.diagram_type, body.model, body.code_detail_level)
+        result = await run_agent(body.prompt, body.diagram_type, body.model, body.code_detail_level)
         duration_ms = round((time.perf_counter() - start) * 1000)
         
         # Estimate token usage (rough approximation: 1 token ≈ 4 characters)
@@ -323,7 +323,7 @@ async def update_diagram_endpoint(
             body.diagram_type or "none", body.model or "default", len(body.prompt),
         )
         start = time.perf_counter()
-        result = update_diagram(body.current_mermaid, body.prompt, body.model, body.diagram_type)
+        result = await update_diagram(body.current_mermaid, body.prompt, body.model, body.diagram_type)
         duration_ms = round((time.perf_counter() - start) * 1000)
         
         # Estimate token usage
@@ -390,15 +390,77 @@ async def generate_diagram_legacy(
 
 @app.post(f"{API_V1_PREFIX}/plan")
 @limiter.limit("5/minute")
-def get_plan(request: Request, body: PromptRequest):
+async def get_plan(request: Request, body: PromptRequest):
     """Return only the diagram plan (no diagram yet). Use for multi-step: show plan → user confirms → POST to /generate-from-plan."""
     from agent import run_plan_only
     try:
-        plan = run_plan_only(body.prompt, body.diagram_type, body.model)
+        plan = await run_plan_only(body.prompt, body.diagram_type, body.model)
         return {"diagram_plan": plan, "diagram_type": body.diagram_type}
     except Exception as e:
         logger.exception("plan_error", extra={"diagram_type": body.diagram_type})
         raise HTTPException(status_code=500, detail="Plan generation failed. Please try again.")
+
+
+@app.post(f"{API_V1_PREFIX}/generate/stream")
+@limiter.limit(RATE_LIMIT_GENERATE)
+async def generate_diagram_stream(
+    request: Request,
+    body: PromptRequest,
+    db=Depends(get_db),
+    current_user=Depends(get_current_user_from_request),
+):
+    """
+    Streaming diagram generation. Returns Server-Sent Events.
+    Events: data: {"token": "..."} during generation, data: {"done": true, "result": {...}} on completion.
+    A single LLM call is used for both streaming tokens and producing the final result.
+    Usage is incremented only after the first successful token or result is produced.
+    """
+    import json as _json
+    from fastapi.responses import StreamingResponse
+    from agent import run_agent_streaming
+    from usage import check_and_increment_usage, track_token_usage
+
+    async def event_stream():
+        try:
+            level = (body.code_detail_level or "small").lower()
+            if level not in ("small", "complete"):
+                level = "small"
+
+            usage_incremented = False
+            async for item in run_agent_streaming(body.prompt, body.diagram_type, body.model, level):
+                # Increment usage on the first successfully produced item (token or result)
+                if not usage_incremented and current_user:
+                    try:
+                        await check_and_increment_usage(db, current_user)
+                        usage_incremented = True
+                    except Exception:
+                        # Propagate limit errors as an SSE error event and stop
+                        logger.warning("stream_usage_limit_exceeded | user=%s", getattr(current_user, "id", "?"))
+                        yield f"data: {_json.dumps({'error': 'Usage limit reached.'})}\n\n"
+                        return
+
+                if isinstance(item, str):
+                    yield f"data: {_json.dumps({'token': item})}\n\n"
+                elif isinstance(item, dict):
+                    if current_user:
+                        try:
+                            total_tokens = (len(body.prompt) // 4) + 500 + len(str(item.get("mermaid", ""))) // 4
+                            await track_token_usage(db, current_user, total_tokens)
+                        except Exception:
+                            pass
+                    yield f"data: {_json.dumps({'done': True, 'result': item})}\n\n"
+        except Exception:
+            logger.exception("stream_generate_error")
+            yield f"data: {_json.dumps({'error': 'Generation failed. Please try again.'})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post(f"{API_V1_PREFIX}/generate-from-plan")
@@ -420,7 +482,7 @@ def generate_diagram_from_plan(request: Request, body: GenerateFromPlanRequest):
 
 @app.post(f"{API_V1_PREFIX}/generate-from-repo")
 @limiter.limit("5/minute")
-def generate_diagram_from_repo(request: Request, body: GenerateFromRepoRequest):
+async def generate_diagram_from_repo(request: Request, body: GenerateFromRepoRequest):
     """
     Deep-analyze a GitHub repo and generate the chosen diagram type.
     Flow: 1) Deep repo analysis, 2) LLM repo explanation, 3) Diagram plan, 4) Diagram.
@@ -437,8 +499,7 @@ def generate_diagram_from_repo(request: Request, body: GenerateFromRepoRequest):
         raw_summary = analyze_repo(body.repo_url.strip())
         if len(raw_summary) > REPO_ANALYSIS_MAX_LENGTH:
             raw_summary = raw_summary[:REPO_ANALYSIS_MAX_LENGTH] + "\n... (truncated for analysis)"
-        repo_explanation = generate_repo_explanation(raw_summary, body.model)
-        # Strict prompt: prevent hallucinating AWS/Stripe/etc. not in the repo
+        repo_explanation = await generate_repo_explanation(raw_summary, body.model)
         repo_prompt = (
             "CRITICAL - Repository analysis mode: Extract ONLY components that are explicitly "
             "mentioned or clearly evident in the codebase below. Do NOT invent or assume cloud "
@@ -451,7 +512,7 @@ def generate_diagram_from_repo(request: Request, body: GenerateFromRepoRequest):
                 "in the diagram—each app and shared package. Do not merge or omit projects."
             )
         repo_prompt += "\n\n" + raw_summary
-        result = run_agent(repo_prompt, body.diagram_type, body.model, body.code_detail_level)
+        result = await run_agent(repo_prompt, body.diagram_type, body.model, body.code_detail_level)
         result["repo_url"] = body.repo_url.strip()
         result["repo_explanation"] = repo_explanation
         diagram_plan = result.get("diagram_plan")

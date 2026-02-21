@@ -15,6 +15,8 @@ def extract_json(text: str) -> dict:
     if not text or not text.strip():
         raise ValueError("Empty response from LLM")
 
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE).strip()
+
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -37,7 +39,7 @@ def extract_json(text: str) -> dict:
     raise ValueError(f"Could not extract JSON from response: {text[:200]}")
 
 
-def validate_and_retry(
+async def validate_and_retry(
     diagram_type: str,
     plan: dict,
     prompt: str,
@@ -73,7 +75,7 @@ User's original request: {prompt[:300]}
                 SystemMessage(content="You fix JSON to satisfy the validation errors. Output ONLY valid JSON."),
                 HumanMessage(content=fix_prompt),
             ]
-            response = llm_to_use.invoke(messages)
+            response = await llm_to_use.ainvoke(messages)
             retry_plan = extract_json(response.content)
             retry_result = validate_and_repair(diagram_type, retry_plan)
             if retry_result.is_valid:

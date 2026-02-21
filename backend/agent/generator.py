@@ -9,7 +9,7 @@ from agent import layouts
 logger = logging.getLogger("architectai.agent.generator")
 
 
-def generator_node(state: AgentState) -> dict:
+async def generator_node(state: AgentState) -> dict:
     """
     Generates Mermaid diagram code from the plan.
     Returns multiple layout versions for Architecture and HLD diagrams.
@@ -30,7 +30,7 @@ def generator_node(state: AgentState) -> dict:
 
     if diagram_type == "chat":
         prompt = plan.get("prompt") or state.get("prompt") or ""
-        mermaid_code = generate_chat_mermaid(prompt, llm_to_use)
+        mermaid_code = await generate_chat_mermaid(prompt, llm_to_use)
         return {"json_output": {
             "mermaid": mermaid_code,
             "nodes": [],

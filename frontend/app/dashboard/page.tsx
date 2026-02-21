@@ -25,6 +25,7 @@ import {
     AlertCircle,
     Loader2,
     Coins,
+    ExternalLink,
 } from "lucide-react";
 import { AppLogo } from "@/components/AppLogo";
 import { cn } from "@/lib/utils";
@@ -37,8 +38,10 @@ import {
     type DashboardOverview,
 } from "@/lib/dashboard";
 import { type PlanType } from "@/lib/subscription";
-import { clearToken, getToken } from "@/lib/auth";
+import { clearToken, getToken, getAuthHeaders } from "@/lib/auth";
+import { getDiagramUrl } from "@/lib/api";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 
 type Tab = "overview" | "diagrams" | "settings" | "billing";
 
@@ -417,16 +420,17 @@ function OverviewTab({ data }: { data: DashboardOverview }) {
                     </div>
                     <div className="space-y-2">
                         {recent_diagrams.slice(0, 5).map((diagram) => (
-                            <div
+                            <Link
                                 key={diagram.id}
-                                className="flex items-center justify-between rounded-lg bg-[var(--secondary)] p-3 hover:bg-[var(--accent)] transition-colors cursor-pointer"
+                                href={`/editor?diagram=${diagram.id}`}
+                                className="flex items-center justify-between rounded-lg bg-[var(--secondary)] p-3 hover:bg-[var(--accent)] transition-colors cursor-pointer group"
                             >
                                 <div className="flex items-center gap-3">
                                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)]/20">
                                         <FileCode2 className="h-4 w-4 text-[var(--primary)]" />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-medium text-[var(--foreground)]">
+                                        <p className="text-sm font-medium text-[var(--foreground)] group-hover:text-[var(--primary)] transition-colors">
                                             {diagram.title}
                                         </p>
                                         <p className="text-xs text-[var(--muted)]">
@@ -437,8 +441,11 @@ function OverviewTab({ data }: { data: DashboardOverview }) {
                                         </p>
                                     </div>
                                 </div>
-                                <ChevronRight className="h-4 w-4 text-[var(--muted)]" />
-                            </div>
+                                <div className="flex items-center gap-1.5 text-[var(--muted)] group-hover:text-[var(--primary)] transition-colors">
+                                    <span className="text-xs opacity-0 group-hover:opacity-100 transition-opacity">Open</span>
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                </div>
+                            </Link>
                         ))}
                     </div>
                 </div>
@@ -449,10 +456,37 @@ function OverviewTab({ data }: { data: DashboardOverview }) {
 
 // --- Diagrams Tab ---
 function DiagramsTab({
-    diagrams,
+    diagrams: initialDiagrams,
 }: {
     diagrams: DashboardOverview["recent_diagrams"];
 }) {
+    const router = useRouter();
+    const [diagrams, setDiagrams] = useState(initialDiagrams);
+    const [deletingId, setDeletingId] = useState<number | null>(null);
+
+    const handleOpen = (id: number) => {
+        router.push(`/editor?diagram=${id}`);
+    };
+
+    const handleDelete = async (e: React.MouseEvent, id: number) => {
+        e.stopPropagation();
+        if (!confirm("Delete this diagram? This cannot be undone.")) return;
+        setDeletingId(id);
+        try {
+            const res = await fetch(getDiagramUrl(id), {
+                method: "DELETE",
+                headers: getAuthHeaders(),
+            });
+            if (!res.ok) throw new Error("Delete failed");
+            setDiagrams((prev) => prev.filter((d) => d.id !== id));
+            toast.success("Diagram deleted");
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Delete failed");
+        } finally {
+            setDeletingId(null);
+        }
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -487,28 +521,43 @@ function DiagramsTab({
                     {diagrams.map((diagram) => (
                         <div
                             key={diagram.id}
-                            className="group rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 hover:border-[var(--primary)]/30 transition-all cursor-pointer"
+                            onClick={() => handleOpen(diagram.id)}
+                            className={cn(
+                                "group rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 hover:border-[var(--primary)]/30 hover:shadow-lg transition-all cursor-pointer",
+                                deletingId === diagram.id && "opacity-40 scale-95 pointer-events-none"
+                            )}
                         >
                             <div className="flex items-start justify-between">
                                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--primary)]/20">
                                     <FileCode2 className="h-5 w-5 text-[var(--primary)]" />
                                 </div>
-                                <button className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-[var(--secondary)]">
-                                    <Trash2 className="h-4 w-4 text-[var(--muted)] hover:text-red-400" />
-                                </button>
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        onClick={(e) => handleDelete(e, diagram.id)}
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-red-500/20"
+                                        title="Delete diagram"
+                                    >
+                                        <Trash2 className="h-4 w-4 text-[var(--muted)] hover:text-red-400" />
+                                    </button>
+                                </div>
                             </div>
-                            <h3 className="mt-3 text-sm font-medium text-[var(--foreground)] truncate">
+                            <h3 className="mt-3 text-sm font-medium text-[var(--foreground)] truncate group-hover:text-[var(--primary)] transition-colors">
                                 {diagram.title}
                             </h3>
-                            <p className="mt-1 text-xs text-[var(--muted)]">
+                            <p className="mt-1 text-xs text-[var(--muted)] capitalize">
                                 {diagram.diagram_type || "Unknown type"}
                             </p>
-                            <p className="mt-2 text-xs text-[var(--muted)]">
-                                Updated{" "}
-                                {diagram.updated_at
-                                    ? new Date(diagram.updated_at).toLocaleDateString()
-                                    : "N/A"}
-                            </p>
+                            <div className="mt-3 flex items-center justify-between">
+                                <p className="text-xs text-[var(--muted)]">
+                                    Updated{" "}
+                                    {diagram.updated_at
+                                        ? new Date(diagram.updated_at).toLocaleDateString()
+                                        : "N/A"}
+                                </p>
+                                <span className="flex items-center gap-1 text-xs text-[var(--primary)] opacity-0 group-hover:opacity-100 transition-opacity">
+                                    Open <ExternalLink className="h-3 w-3" />
+                                </span>
+                            </div>
                         </div>
                     ))}
                 </div>

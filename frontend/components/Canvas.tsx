@@ -94,6 +94,7 @@ function CanvasKeyboardShortcuts({
   onToggleSidebar,
   onShowHelp,
   onCloseOverlays,
+  onSave,
 }: {
   onUndo: () => void;
   onRedo: () => void;
@@ -104,6 +105,7 @@ function CanvasKeyboardShortcuts({
   onToggleSidebar: () => void;
   onShowHelp: () => void;
   onCloseOverlays?: () => void;
+  onSave?: () => void;
 }) {
   const { fitView } = useReactFlow();
   useEffect(() => {
@@ -135,6 +137,11 @@ function CanvasKeyboardShortcuts({
         onOpenExport();
         return;
       }
+      if (mod && e.key === "s") {
+        e.preventDefault();
+        onSave?.();
+        return;
+      }
       if (mod && e.key === "2") {
         e.preventDefault();
         onToggleSidebar();
@@ -163,6 +170,7 @@ function CanvasKeyboardShortcuts({
     onToggleSidebar,
     onShowHelp,
     onCloseOverlays,
+    onSave,
   ]);
   return null;
 }
@@ -281,9 +289,18 @@ function buildNodeCodeMap(plan: Record<string, unknown> | null, diagramType: str
 
 export interface CanvasProps {
   onEditCode?: (code: string) => void;
+  initialDiagram?: {
+    diagramCode: string | null;
+    nodes: import("@xyflow/react").Node[];
+    edges: import("@xyflow/react").Edge[];
+    diagramType: string;
+    diagramPlan?: Record<string, unknown> | null;
+    diagramId?: number;
+    title?: string;
+  } | null;
 }
 
-function CanvasInner({ onEditCode }: CanvasProps) {
+function CanvasInner({ onEditCode, initialDiagram }: CanvasProps) {
   const { user } = useAuth();
   const [nodes, setNodes, onNodesChangeBase] = useNodesState(EMPTY_NODES);
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([]);
@@ -313,6 +330,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [diagramsPanelOpen, setDiagramsPanelOpen] = useState(false);
   const [savedDiagramId, setSavedDiagramId] = useState<number | null>(null);
+  const [savedDiagramTitle, setSavedDiagramTitle] = useState<string | null>(null);
   const [signupOpen, setSignupOpen] = useState(false);
   // Undo/redo history (only for React Flow canvas; not for Mermaid view)
   const [past, setPast] = useState<HistorySnapshot[]>([]);
@@ -503,8 +521,10 @@ function CanvasInner({ onEditCode }: CanvasProps) {
     setDiagramPlan(null);
     setExplanation(null);
     setModelResponse(null);
+    setModelThinking(null);
     setNewDiagramCount((c) => c + 1); // Clears GitHub repos panel cache
     setSavedDiagramId(null);
+    setSavedDiagramTitle(null);
     setCustomColors({});
     toast.success("New diagram");
   }, [setNodes, setEdges]);
@@ -517,6 +537,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
       diagramType: string;
       diagramPlan?: Record<string, unknown> | null;
       diagramId?: number;
+      title?: string;
     }) => {
       setDiagramCode(data.diagramCode);
       setNodes(data.nodes || []);
@@ -524,12 +545,22 @@ function CanvasInner({ onEditCode }: CanvasProps) {
       setDiagramType(data.diagramType as DiagramType);
       setDiagramPlan(data.diagramPlan || null);
       setSavedDiagramId(data.diagramId ?? null);
+      setSavedDiagramTitle(data.title ?? null);
       setPast([]);
       setFuture([]);
       toast.success("Diagram loaded");
     },
     [setNodes, setEdges]
   );
+
+  // Auto-load initial diagram passed from URL query params
+  const initialDiagramLoadedRef = useRef(false);
+  useEffect(() => {
+    if (initialDiagram && !initialDiagramLoadedRef.current) {
+      initialDiagramLoadedRef.current = true;
+      handleLoadDiagram(initialDiagram);
+    }
+  }, [initialDiagram, handleLoadDiagram]);
 
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
@@ -1352,11 +1383,17 @@ function CanvasInner({ onEditCode }: CanvasProps) {
                 type="button"
                 onClick={() => setSaveModalOpen(true)}
                 className="flex h-9 sm:h-8 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 sm:px-2.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition shrink-0"
-                title="Save diagram"
+                title="Save diagram (Ctrl+S)"
               >
                 <Save className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Save</span>
+                <span className="hidden sm:inline">{savedDiagramId ? "Update" : "Save"}</span>
               </button>
+            )}
+            {savedDiagramTitle && (
+              <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-[var(--muted)] max-w-[120px] truncate" title={savedDiagramTitle}>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                {savedDiagramTitle}
+              </span>
             )}
           </div>
 
@@ -1511,6 +1548,9 @@ function CanvasInner({ onEditCode }: CanvasProps) {
                   setEditingNode(null);
                   setShowHelp(false);
                 }}
+                onSave={() => {
+                  if (hasDiagram) setSaveModalOpen(true);
+                }}
               />
               {selectedNode && !editingNode && (
                 <Panel position="top-center" className="flex gap-2">
@@ -1623,8 +1663,9 @@ function CanvasInner({ onEditCode }: CanvasProps) {
       <SaveDiagramModal
         isOpen={saveModalOpen}
         onClose={() => setSaveModalOpen(false)}
-        onSaved={(id) => {
+        onSaved={(id, title) => {
           if (id) setSavedDiagramId(id);
+          if (title) setSavedDiagramTitle(title);
           toast.success("Diagram saved");
           setSaveModalOpen(false);
         }}
@@ -1634,6 +1675,7 @@ function CanvasInner({ onEditCode }: CanvasProps) {
         edges={edges}
         diagramPlan={diagramPlan}
         diagramId={savedDiagramId}
+        existingTitle={savedDiagramTitle}
       />
 
       <DiagramsListPanel

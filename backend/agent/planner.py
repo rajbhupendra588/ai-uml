@@ -8,10 +8,89 @@ from agent.state import AgentState
 from agent.parser import extract_json, validate_and_retry
 from agent.llm_setup import get_llm_for_request, has_llm, llm
 
+# RAG singleton — created once at import time, reused on every request
+from rag import ArchitectureRetriever
+_retriever = ArchitectureRetriever()
+
 logger = logging.getLogger("architectai.agent.planner")
 
 
-def _plan_hld(prompt: str, llm_to_use, context_str: str) -> dict:
+def build_architecture_system_prompt(prompt: str, context_str: str) -> str:
+    """Return the system prompt for architecture diagram planning (shared by planner + streaming)."""
+    is_repo = "repository analysis" in prompt.lower() or (
+        "repository:" in prompt.lower() and "owner/" in prompt.lower()
+    )
+    repo_hint = ""
+    if is_repo:
+        repo_hint = (
+            "\n\nCRITICAL - Repository analysis: Include ONLY components that appear in the codebase "
+            "(Gemfile, package.json, config, README). Do NOT add AWS, Stripe, Redis, etc. unless present."
+        )
+        if "monorepo" in prompt.lower():
+            repo_hint += (
+                " MONOREPO: Include ALL projects (apps/*, packages/*). Each app and shared package "
+                "must be a component. Do not merge or omit any project."
+            )
+    return f"""You are a Senior Solutions Architect. Analyze the user's request and list the necessary IT components.
+
+BEST PRACTICES / CONTEXT:
+- {context_str}
+{repo_hint}
+
+Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
+Required structure: a single key "components" with an array of objects. Each object must have "name" (string) and "type" (string).
+Allowed types: server, database, auth, balancer, client, function, queue, gateway, cdn, cache, search, storage, external, monitoring.
+
+Optional: Add "code" or "snippet" (string) to a component when the user asks for code or implementation (e.g. "show the login function", "architecture with API code", "include code snippets"). Keep snippets short (2-10 lines).
+
+Example: {{"components": [{{"name": "Auth Service", "type": "auth"}}, {{"name": "PostgreSQL", "type": "database"}}, {{"name": "API Gateway", "type": "gateway"}}]}}
+Use 3-12 components. Be specific with names and types."""
+
+
+def build_hld_system_prompt(prompt: str, context_str: str) -> str:
+    """Return the system prompt for HLD diagram planning (shared by planner + streaming)."""
+    is_repo = "repository analysis" in prompt.lower() or (
+        "repository:" in prompt.lower() and "owner/" in prompt.lower()
+    )
+    repo_instruction = ""
+    if is_repo:
+        repo_instruction = (
+            "\n\nCRITICAL - This is repository analysis: Include ONLY components that are explicitly "
+            "in the codebase (Gemfile, package.json, config files, README). Do NOT add AWS, GCP, "
+            "Stripe, SendGrid, SQS, Redis, etc. unless they appear in the files. A simple Ruby/Node "
+            "app with Heroku = just Web app + Database + Heroku."
+        )
+        if "monorepo" in prompt.lower():
+            repo_instruction += (
+                " MONOREPO: Include ALL projects (apps/*, packages/*). Each app and shared package "
+                "must appear as a component. Do not merge or omit any project."
+            )
+    return f"""You are a Senior Solutions Architect creating a detailed High-Level Design (HLD). Analyze the user's request and create a comprehensive system design.
+
+BEST PRACTICES / CONTEXT:
+- {context_str}
+{repo_instruction}
+
+Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
+Required structure:
+    {{
+        "layers": {{
+            "presentation": [ {{"name": "Component Name", "type": "webapp|mobile|desktop", "tech": "Technology Stack"}} ],
+            "application": [ {{"name": "Component Name", "type": "gateway|auth|api", "tech": "Technology"}} ],
+            "business": [ {{"name": "Service Name", "type": "service", "tech": "Language/Framework"}} ],
+            "data": [ {{"name": "Storage Name", "type": "database|cache|queue|search", "tech": "Technology"}} ],
+            "external": [ {{"name": "External Service", "type": "external", "tech": "Provider"}} ],
+            "infrastructure": [ {{"name": "Infra Component", "type": "lb|cdn|dns|monitoring", "tech": "Technology"}} ]
+        }},
+        "flows": [ {{"from": "layer_name", "to": "layer_name", "label": "Protocol/Method"}} ]
+    }}
+
+Include relevant components based on the system requirements. Be specific with technology choices.
+Optional: Add "code" or "snippet" (string, 2-10 lines) to any component when the user asks for code or implementation details.
+"""
+
+
+async def _plan_hld(prompt: str, llm_to_use, context_str: str) -> dict:
     """Plan a detailed High-Level Design diagram."""
     if not has_llm:
         logger.debug("Mock HLD: generating simulated plan")
@@ -75,48 +154,13 @@ def _plan_hld(prompt: str, llm_to_use, context_str: str) -> dict:
         ]
         return {"layers": layers, "flows": flows, "type": "hld"}
 
-    is_repo_input = "repository analysis" in prompt.lower() or ("repository:" in prompt.lower() and "owner/" in prompt.lower())
-    repo_instruction = ""
-    if is_repo_input:
-        repo_instruction = (
-            "\n\nCRITICAL - This is repository analysis: Include ONLY components that are explicitly "
-            "in the codebase (Gemfile, package.json, config files, README). Do NOT add AWS, GCP, "
-            "Stripe, SendGrid, SQS, Redis, etc. unless they appear in the files. A simple Ruby/Node "
-            "app with Heroku = just Web app + Database + Heroku."
-        )
-        if "monorepo" in prompt.lower():
-            repo_instruction += (
-                " MONOREPO: Include ALL projects (apps/*, packages/*). Each app and shared package "
-                "must appear as a component. Do not merge or omit any project."
-            )
-    system_prompt = f"""You are a Senior Solutions Architect creating a detailed High-Level Design (HLD). Analyze the user's request and create a comprehensive system design.
-
-BEST PRACTICES / CONTEXT:
-- {context_str}
-{repo_instruction}
-
-Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
-Required structure:
-    {{
-        "layers": {{
-            "presentation": [ {{"name": "Component Name", "type": "webapp|mobile|desktop", "tech": "Technology Stack"}} ],
-            "application": [ {{"name": "Component Name", "type": "gateway|auth|api", "tech": "Technology"}} ],
-            "business": [ {{"name": "Service Name", "type": "service", "tech": "Language/Framework"}} ],
-            "data": [ {{"name": "Storage Name", "type": "database|cache|queue|search", "tech": "Technology"}} ],
-            "external": [ {{"name": "External Service", "type": "external", "tech": "Provider"}} ],
-            "infrastructure": [ {{"name": "Infra Component", "type": "lb|cdn|dns|monitoring", "tech": "Technology"}} ]
-        }},
-        "flows": [ {{"from": "layer_name", "to": "layer_name", "label": "Protocol/Method"}} ]
-    }}
-
-Include relevant components based on the system requirements. Be specific with technology choices.
-Optional: Add "code" or "snippet" (string, 2-10 lines) to any component when the user asks for code or implementation details.
-"""
+    system_prompt = build_hld_system_prompt(prompt, context_str)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
     try:
-        response = (llm_to_use or llm).invoke(messages)
-        logger.debug("HLD LLM raw response: %s", response.content[:500] if response.content else "<empty>")
-        plan = extract_json(response.content)
+        response = await (llm_to_use or llm).ainvoke(messages)
+        raw_content = response.content or ""
+        logger.debug("HLD LLM raw response: %s", raw_content[:500] if raw_content else "<empty>")
+        plan = extract_json(raw_content)
         plan["type"] = "hld"
     except Exception as e:
         logger.exception("HLD LLM error: %s", e)
@@ -175,7 +219,7 @@ def _plan_mock_architecture(prompt: str) -> dict:
     return {"components": components}
 
 
-def planner_node(state: AgentState) -> dict:
+async def planner_node(state: AgentState) -> dict:
     """
     Plans the diagram based on prompt and diagram_type.
     Routes to _plan_hld, plan_uml, or architecture LLM.
@@ -184,16 +228,14 @@ def planner_node(state: AgentState) -> dict:
     diagram_type = state.get("diagram_type") or "architecture"
     model = state.get("model") or ""
 
-    from rag import ArchitectureRetriever
-    retriever = ArchitectureRetriever()
-    context_parts = retriever.search(prompt, top_k=5)
+    context_parts = _retriever.search(prompt, top_k=5)
     context_str = "\n- ".join(context_parts) if context_parts else "Use industry best practices."
 
     llm_to_use = get_llm_for_request(model) if model else get_llm_for_request(None)
 
     if diagram_type == "hld":
-        plan = _plan_hld(prompt, llm_to_use, context_str)
-        plan, _valid, _retry = validate_and_retry(
+        plan = await _plan_hld(prompt, llm_to_use, context_str)
+        plan, _valid, _retry = await validate_and_retry(
             "hld",
             plan,
             prompt,
@@ -207,47 +249,22 @@ def planner_node(state: AgentState) -> dict:
 
     if diagram_type not in ("architecture", "hld"):
         from uml_flow import plan_uml
-        plan = plan_uml(diagram_type, prompt, llm_to_use)
+        plan = await plan_uml(diagram_type, prompt, llm_to_use)
         return {"diagram_plan": plan}
 
     if not has_llm:
         plan = _plan_mock_architecture(prompt)
         return {"diagram_plan": plan}
 
-
-    is_repo_arch = "repository analysis" in prompt.lower() or ("repository:" in prompt.lower() and "owner/" in prompt.lower())
-    repo_arch_hint = ""
-    if is_repo_arch:
-        repo_arch_hint = (
-            "\n\nCRITICAL - Repository analysis: Include ONLY components that appear in the codebase "
-            "(Gemfile, package.json, config, README). Do NOT add AWS, Stripe, Redis, etc. unless present."
-        )
-        if "monorepo" in prompt.lower():
-            repo_arch_hint += (
-                " MONOREPO: Include ALL projects (apps/*, packages/*). Each app and shared package "
-                "must be a component. Do not merge or omit any project."
-            )
-    system_prompt = f"""You are a Senior Solutions Architect. Analyze the user's request and list the necessary IT components.
-
-BEST PRACTICES / CONTEXT:
-- {context_str}
-{repo_arch_hint}
-
-Output ONLY a valid JSON object. No markdown, no code fences, no explanation.
-Required structure: a single key "components" with an array of objects. Each object must have "name" (string) and "type" (string).
-Allowed types: server, database, auth, balancer, client, function, queue, gateway, cdn, cache, search, storage, external, monitoring.
-
-Optional: Add "code" or "snippet" (string) to a component when the user asks for code or implementation (e.g. "show the login function", "architecture with API code", "include code snippets"). Keep snippets short (2-10 lines).
-
-Example: {{"components": [{{"name": "Auth Service", "type": "auth"}}, {{"name": "PostgreSQL", "type": "database"}}, {{"name": "API Gateway", "type": "gateway"}}]}}
-Use 3-12 components. Be specific with names and types."""
+    system_prompt = build_architecture_system_prompt(prompt, context_str)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
     raw_plan = None
     try:
-        response = (llm_to_use or llm).invoke(messages)
-        logger.debug("LLM raw response: %s", response.content[:500] if response.content else "<empty>")
-        raw_plan = extract_json(response.content)
-        plan, _valid, _retry = validate_and_retry(
+        response = await (llm_to_use or llm).ainvoke(messages)
+        raw_content = response.content or ""
+        logger.debug("LLM raw response: %s", raw_content[:500] if raw_content else "<empty>")
+        raw_plan = extract_json(raw_content)
+        plan, _valid, _retry = await validate_and_retry(
             "architecture",
             raw_plan,
             prompt,
@@ -256,10 +273,7 @@ Use 3-12 components. Be specific with names and types."""
         )
     except Exception as e:
         logger.exception("LLM error: %s", e)
-        # Fallback to smart mock plan if LLM fails (e.g. auth error)
         plan = _plan_mock_architecture(prompt)
-        # Ensure it's valid
         plan = get_valid_plan("architecture", plan)
-
 
     return {"diagram_plan": plan}

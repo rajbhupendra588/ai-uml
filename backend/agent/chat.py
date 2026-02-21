@@ -1,5 +1,6 @@
 """Chat-mode Mermaid generation, diagram update, and repo explanation."""
 import logging
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -34,7 +35,7 @@ def _detect_mermaid_type(mermaid_code: str) -> str:
     return "unknown"
 
 
-def generate_chat_mermaid(prompt: str, llm_to_use) -> str:
+async def generate_chat_mermaid(prompt: str, llm_to_use) -> str:
     """
     Generate generic Mermaid code for 'Chat' mode.
     Allows user to ask for any diagram type supported by Mermaid.
@@ -52,7 +53,7 @@ Rules:
 """
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
     try:
-        response = llm_to_use.invoke(messages)
+        response = await llm_to_use.ainvoke(messages)
         content = response.content.strip()
         if content.startswith("```mermaid"):
             content = content[10:]
@@ -66,7 +67,7 @@ Rules:
         return "graph TD\n    Error[Generation Failed]\n    Details[Check Logs]"
 
 
-def update_diagram(current_mermaid: str, prompt: str, model: str | None = None, diagram_type: str | None = None) -> dict:
+async def update_diagram(current_mermaid: str, prompt: str, model: str | None = None, diagram_type: str | None = None) -> dict:
     """
     Update an existing diagram based on user refinement prompt.
     Takes current Mermaid code and user's update request, returns updated diagram.
@@ -82,32 +83,21 @@ def update_diagram(current_mermaid: str, prompt: str, model: str | None = None, 
             "selectedVersion": 0,
         }
 
-    # Detect if the user changed diagram type (e.g. from architecture to hld, or sequence to class)
-    # If so, do a FRESH generation with the new type instead of updating the old mermaid
     if diagram_type:
         dt = diagram_type.lower()
-        # Always do fresh generation when diagram_type is explicitly set and differs
-        # from what the current diagram looks like it was built for.
-        # We check both the mermaid syntax type AND the semantic type.
         current_type = _detect_mermaid_type(current_mermaid)
-
-        # Semantic types that should always trigger fresh gen when switching between them
-        # (even if they share the same underlying mermaid syntax like flowchart)
         always_fresh_types = {"architecture", "hld", "class", "sequence", "usecase",
                               "activity", "state", "component", "deployment",
                               "flowchart", "mindtree"}
-
         if dt in always_fresh_types:
             logger.info("Diagram type '%s' requested — doing fresh generation (current mermaid type: '%s')", dt, current_type)
             try:
                 from agent import run_agent
-                result = run_agent(prompt, dt, model, "small")
+                result = await run_agent(prompt, dt, model, "small")
                 return result
             except Exception as e:
                 logger.exception("Fresh generation after type change failed: %s", e)
-                # Fall through to update approach as fallback
 
-    # Map our backend diagram types to Mermaid keywords for LLM hint
     type_hint = ""
     if diagram_type:
         d_map = {
@@ -149,8 +139,9 @@ User's update request: {prompt}
 Return the updated Mermaid diagram code only:"""
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     try:
-        response = llm_to_use.invoke(messages)
-        content = response.content.strip()
+        response = await llm_to_use.ainvoke(messages)
+        raw_content = (response.content or "").strip()
+        content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL | re.IGNORECASE).strip()
         if content.startswith("```mermaid"):
             content = content[10:]
         elif content.startswith("```"):
@@ -176,7 +167,7 @@ Return the updated Mermaid diagram code only:"""
         }
 
 
-def generate_repo_explanation(raw_summary: str, model: str | None = None) -> str:
+async def generate_repo_explanation(raw_summary: str, model: str | None = None) -> str:
     """
     Generate a user-friendly, detailed explanation of a GitHub repository from its raw analysis.
     Used when creating diagrams from repos: show in chat so users understand the repo first.
@@ -200,7 +191,7 @@ Your explanation should:
     prompt = f"""Analyze this repository and write a detailed explanation:\n\n{raw_summary[:18000]}"""
     messages = [SystemMessage(content=system), HumanMessage(content=prompt)]
     try:
-        response = (llm_to_use or llm).invoke(messages)
+        response = await (llm_to_use or llm).ainvoke(messages)
         text = (response.content or "").strip()
         return text[:4000] if text else raw_summary[:1500]
     except Exception as e:

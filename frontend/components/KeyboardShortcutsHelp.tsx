@@ -9,6 +9,7 @@ const mod = isMac ? "⌘" : "Ctrl";
 const SHORTCUTS = [
   { keys: [mod, "Z"], label: "Undo" },
   { keys: [mod, "⇧", "Z"], label: "Redo" },
+  { keys: [mod, "S"], label: "Save diagram" },
   { keys: [mod, "0"], label: "Zoom to fit" },
   { keys: [mod, "N"], label: "New diagram" },
   { keys: [mod, "E"], label: "Export menu" },

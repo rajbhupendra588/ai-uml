@@ -9,6 +9,7 @@ from typing import Any
 from diagram_validator import validate_and_repair, get_valid_plan
 from langchain_core.messages import HumanMessage, SystemMessage
 
+
 logger = logging.getLogger("architectai.uml")
 
 
@@ -241,12 +242,13 @@ def _parse_json(raw: str) -> dict:
         raise
 
 
-def _invoke_llm(system_prompt: str, user_prompt: str, llm) -> dict:
+async def _invoke_llm(system_prompt: str, user_prompt: str, llm) -> dict:
     from langchain_core.messages import HumanMessage, SystemMessage
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-    response = llm.invoke(messages)
+    response = await llm.ainvoke(messages)
     raw = getattr(response, "content", "") or ""
     return _parse_json(raw)
+
 
 
 def _uml_fix_hint(diagram_type: str) -> str:
@@ -264,7 +266,7 @@ def _uml_fix_hint(diagram_type: str) -> str:
     return hints.get(diagram_type, "Output only valid JSON matching the required structure.")
 
 
-def plan_uml(diagram_type: str, prompt: str, llm) -> dict:
+async def plan_uml(diagram_type: str, prompt: str, llm) -> dict:
     """Return a validated plan dict for the given UML diagram type (LLM)."""
     prompts = {
         "class": CLASS_SYSTEM_PROMPT,
@@ -281,7 +283,7 @@ def plan_uml(diagram_type: str, prompt: str, llm) -> dict:
     if not sys_prompt or not llm:
         return _mock_plan_uml(diagram_type, prompt)
     try:
-        plan = _invoke_llm(sys_prompt, prompt, llm)
+        plan = await _invoke_llm(sys_prompt, prompt, llm)
         result = validate_and_repair(diagram_type, plan)
         if result.is_valid:
             logger.info("UML plan validation passed", extra={"diagram_type": diagram_type})
@@ -304,7 +306,7 @@ Original request: {prompt[:200]}
                     SystemMessage(content="Output ONLY valid JSON. No markdown, no explanation."),
                     HumanMessage(content=fix_prompt),
                 ]
-                response = llm.invoke(messages)
+                response = await llm.ainvoke(messages)
                 raw = getattr(response, "content", "") or ""
                 retry_plan = _parse_json(raw)
                 retry_result = validate_and_repair(diagram_type, retry_plan)
